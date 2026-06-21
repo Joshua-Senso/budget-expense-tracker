@@ -11,6 +11,11 @@ dependencies = [
 [dependency-groups]
 dev = [
     "alembic>=1.18.4",
+    "httpx>=0.28.1",
     "pytest>=9.1.1",
     "ruff>=0.15.18",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
