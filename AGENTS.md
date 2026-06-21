@@ -134,3 +134,8 @@ feat(auth)!: change session cookie domain        # breaking → MAJOR
 
 **Merge strategy:** squash-merge work → release (one clean commit per PR); use a
 merge commit for release → `main`, then tag `vX.Y.0`.
+
+**Squash body:** keep GitHub's auto-filled title (the Conventional Commit PR title
++ `(#PR)`). But rewrite the squash *description* into a single summary plus one
+`Co-Authored-By:` line — do not ship GitHub's concatenated per-commit bodies,
+duplicate trailers, or the auto-added local-email co-author.
