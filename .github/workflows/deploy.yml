@@ -1,0 +1,33 @@
+name: Deploy
+
+# Pulls the freshly built images on the application host and restarts the
+# affected services, then runs migrations as a deploy step (Better Auth CLI
+# for its tables, Alembic for app tables). See ARCHITECTURE.md §13.
+#
+# Requires repo/environment secrets: SSH_HOST, SSH_USER, SSH_KEY.
+
+on:
+  workflow_run:
+    workflows: ["Build images"]
+    types: [completed]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          script: |
+            cd /opt/expense-tracker
+            git pull --ff-only
+            docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml pull
+            docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d
+            # Migrations run here once features add tables:
+            #   better-auth CLI (its tables) + `alembic upgrade head` (app tables).
+            # Not needed for v0.1 (api /health + auth hello only, no schema yet).

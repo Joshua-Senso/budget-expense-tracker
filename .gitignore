@@ -1,0 +1,27 @@
+# ── OS / editor ───────────────────────────────────────────────
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# ── Secrets / env ─────────────────────────────────────────────
+# Never commit real env files; the committed *.example templates are kept.
+.env
+.env.*
+!.env.example
+!*.env.example
+
+# ── Python (services/api) ─────────────────────────────────────
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ── Node / Bun (services/auth) ────────────────────────────────
+node_modules/
+*-debug.log*
+
+# ── Misc ──────────────────────────────────────────────────────
+*.log

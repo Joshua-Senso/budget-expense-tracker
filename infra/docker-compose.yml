@@ -1,0 +1,68 @@
+# Production base stack for the application host (ARCHITECTURE.md §5).
+# All services on one private network; no app ports are published — ingress is
+# via Cloudflare Tunnel (see docker-compose.prod.yml). Env comes from the host
+# environment / .env (never committed).
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d
+
+name: expense-tracker
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  auth:
+    build: ../services/auth
+    env_file: [.env]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+    restart: unless-stopped
+
+  api:
+    build: ../services/api
+    env_file: [.env]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+    restart: unless-stopped
+
+  # The arq worker reuses the api image with a different command. Disabled until
+  # background tasks exist (recurring gen / FX refresh / backups) — enabling it
+  # now would crash-loop because app.worker has nothing to run yet.
+  # worker:
+  #   build: ../services/api
+  #   command: ["uv", "run", "arq", "app.worker.settings.WorkerSettings"]
+  #   env_file: [.env]
+  #   depends_on:
+  #     postgres: {condition: service_healthy}
+  #     redis: {condition: service_started}
+  #   restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

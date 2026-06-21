@@ -1,0 +1,16 @@
+# Cloudflare Tunnel ingress (ARCHITECTURE.md §2/§4).
+# Maps public hostnames to internal Compose services. The tunnel is run with a
+# token (TUNNEL_TOKEN); replace <tunnel-id> and the hostnames with your own.
+#
+# Routes: api.<domain> -> FastAPI, auth.<domain> -> Better Auth. The frontend
+# is served by Vercel and is NOT tunneled here.
+
+tunnel: <tunnel-id>
+
+ingress:
+  - hostname: api.example.com
+    service: http://api:8000
+  - hostname: auth.example.com
+    service: http://auth:4000
+  # required catch-all
+  - service: http_status:404
