@@ -159,7 +159,7 @@ The bucket is private with no public read access, so a leaked key is useless wit
 
 ## 13. CI/CD and deployment
 
-- Frontend: Vercel builds and deploys automatically on push to the main branch, with preview deployments per pull request.
+- Frontend: Vercel builds and deploys automatically only on push to the main branch; branch and pull request preview deployments are disabled in `frontend/vercel.json`.
 - Backend: GitHub Actions builds the service images and pushes them to GitHub Container Registry (`ghcr.io`, free); the host pulls and restarts the affected services (via a pull-based updater or an SSH deploy step).
 - Database migrations run as a deploy step: Better Auth CLI for its tables, Alembic for application tables.
 
