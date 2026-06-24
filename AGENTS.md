@@ -55,6 +55,13 @@ is the task contract, so work never depends on chat history. Combine the issue
 
 - **Always work from a Linear issue, via the Linear MCP.** Read the issue first and
   treat it as the spec; keep it updated (move its state, link the PR) as you go.
+- **Resume, don't duplicate.** Before creating an issue, search Linear for an
+  existing one covering the work and continue that issue. Only create a new issue
+  when none exists.
+- **New issues go in the active release Project.** Each version is a Linear Project
+  (e.g. `v0.1`) that maps to `release/X.Y`. Create new issues inside the current
+  release's Project — never loose in the team. The next version gets a new Project
+  (`v0.2`, …).
 - **Linear is required — do not proceed without it.** If the Linear MCP is not
   configured/authenticated, **stop and tell the developer to set it up**
   (see `docs/DEVELOPMENT.md` → Task tracking). Never guess the task or build from
@@ -80,6 +87,10 @@ Every change — a feature, a bug fix, or any edit — flows the same way:
    branch; merge there after review.
 3. **Release → `main`.** Only when the whole version is complete is the release
    branch merged into `main` — which tags the version and deploys.
+
+**Stay current.** Before opening a PR (and again before merging it), sync your
+work branch onto the latest release so the merge is clean and conflicts surface
+early: `git fetch origin && git rebase origin/release/X.Y` (or merge it in).
 
 So the path is always **work branch → release branch → `main`**. No code reaches
 `main` except via a completed-version merge. Never open a PR straight to `main`
@@ -139,3 +150,16 @@ merge commit for release → `main`, then tag `vX.Y.0`.
 + `(#PR)`). But rewrite the squash *description* into a single summary plus one
 `Co-Authored-By:` line — do not ship GitHub's concatenated per-commit bodies,
 duplicate trailers, or the auto-added local-email co-author.
+
+### Pull requests
+
+Open work→release PRs with the repo template (`.github/pull_request_template.md`),
+which GitHub prefills. Fill it out:
+
+- **Title** — the Conventional Commit format, ending with the Linear ID:
+  `type(scope): summary (BUD-123)`.
+- **Summary** — what changed and why, in a few lines.
+- **Linear** — `Part of BUD-123` (or `Closes BUD-123` when the PR fully completes
+  the issue), so Linear links and transitions it.
+- **Testing** — how it was verified (commands run, checks green).
+- **No tool/marketing footers.** Base the PR on `release/X.Y`, never `main`.
