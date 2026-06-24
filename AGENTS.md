@@ -163,3 +163,34 @@ which GitHub prefills. Fill it out:
   the issue), so Linear links and transitions it.
 - **Testing** — how it was verified (commands run, checks green).
 - **No tool/marketing footers.** Base the PR on `release/X.Y`, never `main`.
+
+### Code review
+
+**Reviewing a PR (a review is requested from you).**
+
+- Review the diff against the **Linear issue** (scope + acceptance criteria) and
+  the target workspace's `AGENTS.md`, plus correctness, **security**, and tests.
+- Write all feedback in **Markdown** — a short summary at the top, actionable
+  comments inline on the relevant lines.
+- End the review with a **confidence rating, 1–5 (5 = most confident)**, on two
+  axes, each with a one-line justification:
+  - **Security** — the change is safe (no leaked secrets, ownership/authz intact,
+    no unsafe input/injection).
+  - **Correctness** — no bugs found.
+- Set the review state to match: **approve** (no blockers, high confidence),
+  **request changes** (blocking issues), or **comment** (non-blocking notes).
+
+**Your PR is reviewed (changes requested).**
+
+1. Read every comment — the summary and all inline threads.
+2. **Evaluate, don't rubber-stamp** — fix valid points; reply with reasoning if
+   you disagree, rather than silently ignoring or blindly complying.
+3. **Fix on the right branch** — push to the same work branch for a work→release
+   PR; for a `release → main` PR, open a new work branch + Linear issue into the
+   release (it flows up into the release PR).
+4. One commit per concern, Conventional Commits, referencing the fix.
+5. Reply on each thread (what changed, or why not), then **re-request review**;
+   don't resolve the reviewer's own threads — let them confirm.
+6. **Never bypass a `changes requested` review** (no admin-merge around it) unless
+   the human explicitly authorizes.
+7. Keep the Linear issue updated (state + link).
