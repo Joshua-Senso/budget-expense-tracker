@@ -1,0 +1,88 @@
+# Local development backing services for Expense Tracker.
+#
+# This file runs ONLY the stateful infrastructure (Postgres, Redis, and MinIO
+# as a local stand-in for Cloudflare R2). The application services — FastAPI,
+# Better Auth, the Next.js frontend — are run on the host with hot reload via
+# the Makefile (`make api`, `make auth`, `make web`) for a fast inner loop.
+#
+#   make up      # start these services
+#   make down    # stop them
+#   make logs    # follow their logs
+#   make reset   # stop AND delete all local data (volumes)
+#
+# Defaults below let the stack boot with no .env present; copy .env.example to
+# .env to override. Connection URLs the apps should use are in .env.example.
+
+name: expense-tracker-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-expense}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-expense}
+      POSTGRES_DB: ${POSTGRES_DB:-expense}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-expense} -d ${POSTGRES_DB:-expense}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # S3-compatible object storage standing in for Cloudflare R2 in dev.
+  # Apps point boto3 at http://localhost:9000 with the credentials below.
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "${MINIO_PORT:-9000}:9000"        # S3 API
+      - "${MINIO_CONSOLE_PORT:-9001}:9001" # web console
+    volumes:
+      - miniodata:/data
+
+  # One-shot job: create the two private buckets (receipts + backups), then exit.
+  # Retries until MinIO is reachable, so it needs no healthcheck on the server.
+  createbuckets:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      RECEIPTS_BUCKET: ${RECEIPTS_BUCKET:-receipts}
+      BACKUPS_BUCKET: ${BACKUPS_BUCKET:-backups}
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\" >/dev/null 2>&1; do
+        echo 'waiting for minio to start...'; sleep 1;
+      done;
+      mc mb --ignore-existing local/$$RECEIPTS_BUCKET;
+      mc mb --ignore-existing local/$$BACKUPS_BUCKET;
+      mc anonymous set none local/$$RECEIPTS_BUCKET;
+      mc anonymous set none local/$$BACKUPS_BUCKET;
+      echo 'buckets ready: '$$RECEIPTS_BUCKET', '$$BACKUPS_BUCKET;
+      "
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:

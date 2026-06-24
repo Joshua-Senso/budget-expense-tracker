@@ -1,0 +1,30 @@
+# Production host overrides, layered on top of docker-compose.yml.
+# Adds the Cloudflare Tunnel so the host exposes no inbound ports / public IP
+# (ARCHITECTURE.md §4/§18). Object storage is real Cloudflare R2 here, not MinIO.
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d
+
+name: expense-tracker
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "run"]
+    environment:
+      # Token-based tunnel: ingress (api./auth. → services) is configured in the
+      # Cloudflare Zero Trust dashboard. infra/cloudflared/config.yml documents
+      # the intended mapping for reference.
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - api
+      - auth
+    restart: unless-stopped
+
+  # Pull prebuilt images from ghcr.io instead of building on the host.
+  # Set API_IMAGE / AUTH_IMAGE in the host .env, e.g.
+  #   API_IMAGE=ghcr.io/<owner>/<repo>-api:latest
+  #   AUTH_IMAGE=ghcr.io/<owner>/<repo>-auth:latest
+  auth:
+    image: ${AUTH_IMAGE}
+  api:
+    image: ${API_IMAGE}
