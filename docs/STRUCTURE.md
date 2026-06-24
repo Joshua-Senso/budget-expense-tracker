@@ -26,6 +26,7 @@ expense-tracker/                        # monorepo root
 │   └── DEVELOPMENT.md                  # local dev: make targets, localhost ports, seeding
 │
 ├── frontend/                           # Next.js web app (Vercel "root directory")
+│   ├── vercel.json                     # Vercel deploy policy: main only, no previews
 │   └── …                               # feature-first; pattern → frontend/AGENTS.md
 │
 ├── services/
