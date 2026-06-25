@@ -1,0 +1,20 @@
+# Build context excludes for the FastAPI image (Dockerfile uses COPY . .).
+# Keeps secrets out of the public GHCR image and avoids shadowing the clean
+# `uv sync` dependency layers with host-built artifacts.
+#
+# Patterns are matched against the context root, so caches that appear in
+# subdirectories (app/__pycache__, tests/__pycache__) need the **/ prefix.
+
+# Secrets — never bake local env into a public image.
+.env
+.env.*
+
+# Python virtualenv & caches (rebuilt inside the image by uv).
+.venv
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Misc local cruft.
+**/.DS_Store

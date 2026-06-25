@@ -1,0 +1,12 @@
+# Build context excludes for the Better Auth (Bun) image (Dockerfile uses COPY . .).
+# Keeps secrets out of the public GHCR image and avoids shipping host-built deps.
+
+# Secrets — never bake local env into a public image.
+.env
+.env.*
+
+# Dependencies are reinstalled inside the image via `bun install`.
+node_modules
+
+# Misc local cruft.
+.DS_Store
