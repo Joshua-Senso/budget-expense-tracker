@@ -4,7 +4,7 @@ os.environ.setdefault(
     "DATABASE_URL", "postgresql://expense:expense@localhost:5432/expense"
 )
 
-from app.core.config import get_settings  # noqa: E402
+from app.core.config import Settings, get_settings  # noqa: E402
 from app.core.db import BETTER_AUTH_TABLES, include_app_object, is_app_table  # noqa: E402
 
 
@@ -21,3 +21,11 @@ def test_app_tables_are_included_in_alembic() -> None:
 
 def test_database_url_uses_installed_psycopg_driver() -> None:
     assert get_settings().sqlalchemy_database_url.startswith("postgresql+psycopg://")
+
+
+def test_postgres_url_uses_installed_psycopg_driver() -> None:
+    settings = Settings(
+        database_url="postgres://expense:expense@localhost:5432/expense"
+    )
+
+    assert settings.sqlalchemy_database_url.startswith("postgresql+psycopg://")

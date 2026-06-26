@@ -64,4 +64,5 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
       - run: uv run ruff check .
+      - run: uv run alembic upgrade head
       - run: uv run pytest

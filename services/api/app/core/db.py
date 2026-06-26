@@ -8,6 +8,20 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from app.core.config import get_settings
 
 
+BETTER_AUTH_TABLES = frozenset(
+    {
+        "accounts",
+        "invitations",
+        "jwks",
+        "members",
+        "organizations",
+        "sessions",
+        "users",
+        "verifications",
+    }
+)
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -59,17 +73,3 @@ def include_app_object(
     if table is not None:
         return is_app_table(table.name)
     return True
-
-
-BETTER_AUTH_TABLES = frozenset(
-    {
-        "accounts",
-        "invitations",
-        "jwks",
-        "members",
-        "organizations",
-        "sessions",
-        "users",
-        "verifications",
-    }
-)
