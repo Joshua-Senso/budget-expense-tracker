@@ -4,17 +4,6 @@ import { Pool } from "pg"
 
 import { env } from "./env"
 
-export const authTables = {
-  user: "users",
-  session: "sessions",
-  account: "accounts",
-  verification: "verifications",
-  jwks: "jwks",
-  organization: "organizations",
-  member: "members",
-  invitation: "invitations",
-} as const
-
 export const auth = betterAuth({
   appName: "Expense Tracker",
   basePath: "/api/auth",
@@ -24,18 +13,7 @@ export const auth = betterAuth({
   secret: env.secret,
   baseURL: env.baseUrl,
   trustedOrigins: env.trustedOrigins,
-  user: {
-    modelName: authTables.user,
-  },
-  session: {
-    modelName: authTables.session,
-  },
-  account: {
-    modelName: authTables.account,
-  },
-  verification: {
-    modelName: authTables.verification,
-  },
+  usePlural: true,
   plugins: [
     jwt({
       jwks: {
@@ -51,17 +29,6 @@ export const auth = betterAuth({
       },
     }),
     organization({
-      schema: {
-        organization: {
-          modelName: authTables.organization,
-        },
-        member: {
-          modelName: authTables.member,
-        },
-        invitation: {
-          modelName: authTables.invitation,
-        },
-      },
       teams: {
         enabled: false,
       },

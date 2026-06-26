@@ -6,10 +6,6 @@ process.env.BETTER_AUTH_SECRET = "test-auth-secret-placeholder-32chars"
 process.env.BETTER_AUTH_JWT_AUDIENCE = "expense-api"
 process.env.BETTER_AUTH_TRUSTED_ORIGINS = "http://localhost:3000"
 
-const coreTableNames = ["users", "sessions", "accounts", "verifications"]
-const jwtTableNames = ["jwks"]
-const organizationTableNames = ["organizations", "members", "invitations"]
-
 describe("auth config", () => {
   test("uses the service base path and trusted frontend origin", async () => {
     const { auth } = await import("../src/auth")
@@ -33,13 +29,9 @@ describe("auth config", () => {
   })
 
   test("keeps Better Auth-owned tables plural", async () => {
-    const { authTables } = await import("../src/auth")
+    const { auth } = await import("../src/auth")
 
-    expect(Object.values(authTables)).toEqual([
-      ...coreTableNames,
-      ...jwtTableNames,
-      ...organizationTableNames,
-    ])
+    expect(auth.options.usePlural).toBe(true)
   })
 
   test("enables JWT/JWKS and organization plugins", async () => {
