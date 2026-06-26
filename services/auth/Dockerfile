@@ -13,5 +13,5 @@ COPY . .
 
 ENV NODE_ENV=production
 EXPOSE 4000
-# src/index.ts exports { port, fetch }, which Bun serves directly.
-CMD ["bun", "run", "src/index.ts"]
+# src/server.ts exports { port, fetch }, which Bun serves directly.
+CMD ["bun", "run", "src/server.ts"]

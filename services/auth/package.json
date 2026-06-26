@@ -1,12 +1,19 @@
 {
   "name": "auth",
   "scripts": {
-    "dev": "bun run --hot src/index.ts"
+    "dev": "bun run --hot src/server.ts",
+    "start": "bun run src/server.ts",
+    "schema:generate": "bunx @better-auth/cli@latest generate --config src/auth.ts",
+    "schema:migrate": "bunx @better-auth/cli@latest migrate --config src/auth.ts",
+    "test": "bun test"
   },
   "dependencies": {
+    "better-auth": "^1.6.0",
+    "pg": "^8.16.3",
     "hono": "^4.12.26"
   },
   "devDependencies": {
+    "@types/pg": "^8.15.6",
     "@types/bun": "latest"
   }
 }
