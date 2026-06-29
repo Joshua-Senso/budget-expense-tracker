@@ -90,6 +90,7 @@ async function apiFetch<T>(path: string, options: ApiRequestOptions = {}) {
 
   if (response.status === 401 && token) {
     clearBearerToken()
+    // Non-replayable ReadableStream bodies cannot be retried; feature uploads use FormData.
     response = (await fetchWithAuth(path, options)).response
   }
 

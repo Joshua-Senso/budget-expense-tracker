@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest"
 
 const betterAuthMocks = vi.hoisted(() => ({
   fetch: vi.fn(),
@@ -33,6 +33,11 @@ async function loadAuthClient() {
 describe("getBearerToken", () => {
   beforeEach(() => {
     betterAuthMocks.fetch.mockReset()
+    vi.spyOn(console, "error").mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   test("caches fresh JWTs until they near expiry", async () => {
@@ -59,5 +64,42 @@ describe("getBearerToken", () => {
     await expect(getBearerToken()).resolves.toBe(secondToken)
 
     expect(betterAuthMocks.fetch).toHaveBeenCalledTimes(2)
+  })
+
+  test("logs Better Auth errors before returning null", async () => {
+    betterAuthMocks.fetch.mockResolvedValue({
+      data: null,
+      error: { message: "Not found", status: 404 },
+    })
+    const { getBearerToken } = await loadAuthClient()
+
+    await expect(getBearerToken()).resolves.toBeNull()
+
+    expect(console.error).toHaveBeenCalledWith(
+      "auth: failed to fetch bearer token",
+      { message: "Not found", status: 404 },
+    )
+  })
+
+  test("logs malformed token responses before returning null", async () => {
+    betterAuthMocks.fetch.mockResolvedValue({ data: {}, error: null })
+    const { getBearerToken } = await loadAuthClient()
+
+    await expect(getBearerToken()).resolves.toBeNull()
+
+    expect(console.error).toHaveBeenCalledWith(
+      "auth: bearer token response was malformed",
+      {},
+    )
+  })
+
+  test("logs thrown token request errors before returning null", async () => {
+    const error = new Error("network failed")
+    betterAuthMocks.fetch.mockRejectedValue(error)
+    const { getBearerToken } = await loadAuthClient()
+
+    await expect(getBearerToken()).resolves.toBeNull()
+
+    expect(console.error).toHaveBeenCalledWith("auth: token request threw", error)
   })
 })

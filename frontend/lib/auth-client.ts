@@ -8,6 +8,8 @@ const authClient = createAuthClient({
   plugins: [organizationClient(), jwtClient()],
 })
 
+const tokenPath = "/token"
+
 type CachedBearerToken = {
   token: string
   expiresAt: number
@@ -46,17 +48,25 @@ function isTokenFresh(token: CachedBearerToken) {
 
 function clearBearerToken() {
   cachedBearerToken = null
+  pendingBearerToken = null
 }
 
 async function fetchBearerToken() {
   try {
-    const response = await authClient.$fetch<{ token: string }>("/token")
+    // Better Auth is mounted at /api/auth, so this should resolve to /api/auth/token.
+    const response = await authClient.$fetch<{ token: string }>(tokenPath)
 
     if (response.error) {
+      console.error("auth: failed to fetch bearer token", response.error)
       return null
     }
 
-    const token = response.data.token
+    const token = response.data?.token
+    if (!token) {
+      console.error("auth: bearer token response was malformed", response.data)
+      return null
+    }
+
     const expiresAt = getTokenExpiry(token)
 
     if (expiresAt > Date.now()) {
@@ -64,7 +74,8 @@ async function fetchBearerToken() {
     }
 
     return token
-  } catch {
+  } catch (error) {
+    console.error("auth: token request threw", error)
     return null
   }
 }
