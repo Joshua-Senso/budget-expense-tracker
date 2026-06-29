@@ -3,7 +3,7 @@ from functools import lru_cache
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from jwt import InvalidTokenError, PyJWKClient, PyJWKClientError
+from jwt import PyJWKClient, PyJWTError
 
 from app.core.config import Settings, get_settings
 
@@ -44,7 +44,7 @@ def get_current_user_id(
             issuer=settings.auth_jwt_issuer,
             options={"require": ["exp", "sub"]},
         )
-    except (InvalidTokenError, PyJWKClientError):
+    except PyJWTError:
         raise unauthorized() from None
 
     user_id = payload.get("sub")
