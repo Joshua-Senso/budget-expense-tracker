@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import PostgresDsn
+from pydantic import PostgresDsn, RedisDsn
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -9,6 +9,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: PostgresDsn
+    redis_url: RedisDsn
+    auth_jwks_url: str
+    auth_jwt_issuer: str
+    auth_jwt_audience: str
 
     @computed_field
     @property
