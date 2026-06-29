@@ -26,6 +26,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
+            set -euo pipefail
             cd /opt/expense-tracker
             git pull --ff-only
             docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml pull

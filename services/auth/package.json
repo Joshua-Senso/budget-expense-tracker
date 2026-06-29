@@ -4,7 +4,7 @@
     "dev": "bun run --hot src/server.ts",
     "start": "bun run src/server.ts",
     "schema:generate": "bunx @better-auth/cli@latest generate --config src/auth.ts",
-    "schema:migrate": "bunx @better-auth/cli@latest migrate --config src/auth.ts",
+    "schema:migrate": "bunx @better-auth/cli@latest migrate --yes --config src/auth.ts",
     "test": "bun test"
   },
   "dependencies": {
