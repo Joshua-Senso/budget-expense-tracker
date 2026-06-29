@@ -45,6 +45,7 @@
   --radius-3xl: calc(var(--radius) * 2.25);
   --radius-4xl: calc(var(--radius) * 2.75);
 
+  /* @theme inline emits these inline; the runtime vars (same name) are defined in the theme files */
   --shadow-card: var(--shadow-card);
   --shadow-float: var(--shadow-float);
 

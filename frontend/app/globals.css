@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "../styles/design-system.css";
+/* warm-dark must be imported before light — equal specificity means source order decides */
 @import "../styles/themes/warm-dark.css";
 @import "../styles/themes/light.css";
 
