@@ -8,7 +8,47 @@ const authClient = createAuthClient({
   plugins: [organizationClient(), jwtClient()],
 })
 
-async function getBearerToken() {
+type CachedBearerToken = {
+  token: string
+  expiresAt: number
+}
+
+let cachedBearerToken: CachedBearerToken | null = null
+let pendingBearerToken: Promise<string | null> | null = null
+
+function decodeJwtPayload(token: string) {
+  const [, payload] = token.split(".")
+  if (!payload) {
+    return null
+  }
+
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/")
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")
+    return JSON.parse(atob(padded)) as { exp?: unknown }
+  } catch {
+    return null
+  }
+}
+
+function getTokenExpiry(token: string) {
+  const payload = decodeJwtPayload(token)
+  if (typeof payload?.exp !== "number") {
+    return 0
+  }
+
+  return payload.exp * 1000
+}
+
+function isTokenFresh(token: CachedBearerToken) {
+  return token.expiresAt > Date.now() + 30_000
+}
+
+function clearBearerToken() {
+  cachedBearerToken = null
+}
+
+async function fetchBearerToken() {
   try {
     const response = await authClient.$fetch<{ token: string }>("/token")
 
@@ -16,10 +56,29 @@ async function getBearerToken() {
       return null
     }
 
-    return response.data.token
+    const token = response.data.token
+    const expiresAt = getTokenExpiry(token)
+
+    if (expiresAt > Date.now()) {
+      cachedBearerToken = { token, expiresAt }
+    }
+
+    return token
   } catch {
     return null
   }
 }
 
-export { authClient, getBearerToken }
+async function getBearerToken() {
+  if (cachedBearerToken && isTokenFresh(cachedBearerToken)) {
+    return cachedBearerToken.token
+  }
+
+  pendingBearerToken ??= fetchBearerToken().finally(() => {
+    pendingBearerToken = null
+  })
+
+  return pendingBearerToken
+}
+
+export { authClient, clearBearerToken, getBearerToken }
