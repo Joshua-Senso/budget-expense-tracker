@@ -43,6 +43,17 @@ describe("auth config", () => {
   })
 })
 
+describe("account linking", () => {
+  test("only google is a trusted provider — github and discord rely on emailVerified", async () => {
+    const { auth } = await import("../src/auth")
+    const trusted = auth.options.account?.accountLinking?.trustedProviders as string[] | undefined
+
+    expect(trusted).toContain("google")
+    expect(trusted).not.toContain("github")
+    expect(trusted).not.toContain("discord")
+  })
+})
+
 describe("social providers", () => {
   test("no providers are enabled when OAuth env vars are absent", async () => {
     const { auth } = await import("../src/auth")
