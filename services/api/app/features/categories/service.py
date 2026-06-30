@@ -1,5 +1,3 @@
-import uuid
-
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -36,7 +34,6 @@ def seed_default_categories(db: Session, user_id: str) -> list[UserCategory]:
 
     categories = [
         UserCategory(
-            id=str(uuid.uuid4()),
             user_id=user_id,
             name=name,
             color=color,
@@ -46,12 +43,15 @@ def seed_default_categories(db: Session, user_id: str) -> list[UserCategory]:
     ]
     db.add_all(categories)
     try:
-        db.flush()
-    except IntegrityError:
-        # A concurrent first request won the race and already inserted the defaults.
-        # Roll back our attempt and return whatever is now in the DB.
+        db.commit()
+    except IntegrityError as exc:
+        # Only recover from a unique-violation (SQLSTATE 23505) caused by a
+        # concurrent first request winning the race. Any other IntegrityError
+        # (e.g. CHECK constraint failure) is a real bug and must propagate.
+        if getattr(exc.orig, "pgcode", None) != "23505":
+            raise
         db.rollback()
-        return (
+        return list(
             db.execute(
                 select(UserCategory).where(
                     UserCategory.user_id == user_id,
