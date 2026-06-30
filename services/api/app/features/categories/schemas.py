@@ -8,6 +8,19 @@ from pydantic import BaseModel, field_validator
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
+def _validate_name(v: str) -> str:
+    stripped = v.strip()
+    if not stripped:
+        raise ValueError("name must not be blank")
+    return stripped
+
+
+def _validate_color(v: str) -> str:
+    if not _HEX_COLOR_RE.match(v):
+        raise ValueError("color must be a 6-digit hex string, e.g. #FF0000")
+    return v
+
+
 class CategoryCreate(BaseModel):
     name: str
     color: str
@@ -16,16 +29,12 @@ class CategoryCreate(BaseModel):
     @field_validator("name")
     @classmethod
     def name_nonempty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("name must not be blank")
-        return v
+        return _validate_name(v)
 
     @field_validator("color")
     @classmethod
     def color_hex(cls, v: str) -> str:
-        if not _HEX_COLOR_RE.match(v):
-            raise ValueError("color must be a 6-digit hex string, e.g. #FF0000")
-        return v
+        return _validate_color(v)
 
 
 class CategoryUpdate(BaseModel):
@@ -36,16 +45,12 @@ class CategoryUpdate(BaseModel):
     @field_validator("name")
     @classmethod
     def name_nonempty(cls, v: str | None) -> str | None:
-        if v is not None and not v.strip():
-            raise ValueError("name must not be blank")
-        return v
+        return _validate_name(v) if v is not None else None
 
     @field_validator("color")
     @classmethod
     def color_hex(cls, v: str | None) -> str | None:
-        if v is not None and not _HEX_COLOR_RE.match(v):
-            raise ValueError("color must be a 6-digit hex string, e.g. #FF0000")
-        return v
+        return _validate_color(v) if v is not None else None
 
 
 class CategoryResponse(BaseModel):

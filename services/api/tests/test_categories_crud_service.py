@@ -43,7 +43,7 @@ def _make_category(**kwargs) -> UserCategory:
 # --- list_categories ---
 
 
-def test_list_categories_seeds_and_returns_all() -> None:
+def test_list_categories_returns_existing_without_seeding() -> None:
     db = _mock_db()
     existing = [_make_category(name="Food"), _make_category(name="Transport")]
     db.execute.return_value.scalars.return_value.all.return_value = existing
@@ -51,8 +51,22 @@ def test_list_categories_seeds_and_returns_all() -> None:
     with patch("app.features.categories.service.seed_default_categories") as mock_seed:
         result = list_categories(db, "user-1")
 
-    mock_seed.assert_called_once_with(db, "user-1")
+    mock_seed.assert_not_called()
     assert result == existing
+
+
+def test_list_categories_seeds_when_empty() -> None:
+    db = _mock_db()
+    db.execute.return_value.scalars.return_value.all.return_value = []
+    seeded = [_make_category(name="Food"), _make_category(name="Transport")]
+
+    with patch(
+        "app.features.categories.service.seed_default_categories", return_value=seeded
+    ) as mock_seed:
+        result = list_categories(db, "user-1")
+
+    mock_seed.assert_called_once_with(db, "user-1")
+    assert {c.name for c in result} == {"Food", "Transport"}
 
 
 # --- create_category ---
@@ -141,19 +155,19 @@ def test_update_category_no_fields_is_noop() -> None:
 
 def test_delete_category_happy_path() -> None:
     db = _mock_db()
-    cat = _make_category()
-    db.execute.return_value.scalar_one_or_none.return_value = cat
-    db.scalar.return_value = 3
+    cat1 = _make_category(id="cat-1", name="Food")
+    cat2 = _make_category(id="cat-2", name="Transport")
+    db.execute.return_value.scalars.return_value.all.return_value = [cat1, cat2]
 
     delete_category(db, "user-1", "cat-1")
 
-    db.delete.assert_called_once_with(cat)
+    db.delete.assert_called_once_with(cat1)
     db.commit.assert_called_once()
 
 
 def test_delete_category_not_found_raises() -> None:
     db = _mock_db()
-    db.execute.return_value.scalar_one_or_none.return_value = None
+    db.execute.return_value.scalars.return_value.all.return_value = []
 
     with pytest.raises(CategoryNotFoundError):
         delete_category(db, "user-1", "missing-id")
@@ -161,9 +175,8 @@ def test_delete_category_not_found_raises() -> None:
 
 def test_delete_last_category_raises() -> None:
     db = _mock_db()
-    cat = _make_category()
-    db.execute.return_value.scalar_one_or_none.return_value = cat
-    db.scalar.return_value = 1
+    cat = _make_category(id="cat-1", name="Food")
+    db.execute.return_value.scalars.return_value.all.return_value = [cat]
 
     with pytest.raises(LastCategoryError):
         delete_category(db, "user-1", "cat-1")

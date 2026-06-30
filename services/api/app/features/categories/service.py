@@ -29,6 +29,16 @@ class LastCategoryError(Exception):
     pass
 
 
+def _commit_or_raise_duplicate(db: Session, name: str | None) -> None:
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if getattr(exc.orig, "sqlstate", None) == "23505":
+            raise DuplicateCategoryNameError(name) from exc
+        raise
+
+
 def seed_default_categories(db: Session, user_id: str) -> list[UserCategory]:
     """Insert default personal categories for a new user.
 
@@ -84,12 +94,15 @@ def _personal_categories_query(user_id: str):
 
 
 def list_categories(db: Session, user_id: str) -> list[UserCategory]:
-    seed_default_categories(db, user_id)
-    return list(
+    categories = list(
         db.execute(_personal_categories_query(user_id).order_by(UserCategory.name))
         .scalars()
         .all()
     )
+    if not categories:
+        categories = seed_default_categories(db, user_id)
+        categories.sort(key=lambda c: c.name)
+    return categories
 
 
 def create_category(
@@ -103,13 +116,7 @@ def create_category(
         user_id=user_id, name=name, color=color, expense_group=expense_group
     )
     db.add(category)
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        if getattr(exc.orig, "sqlstate", None) == "23505":
-            raise DuplicateCategoryNameError(name) from exc
-        raise
+    _commit_or_raise_duplicate(db, name)
     return category
 
 
@@ -135,30 +142,22 @@ def update_category(
         if value is not None:
             setattr(category, attr, value)
 
-    try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        if getattr(exc.orig, "sqlstate", None) == "23505":
-            raise DuplicateCategoryNameError(name) from exc
-        raise
+    _commit_or_raise_duplicate(db, name)
     return category
 
 
 def delete_category(db: Session, user_id: str, category_id: str) -> None:
-    category = db.execute(
-        _personal_categories_query(user_id).where(UserCategory.id == category_id)
-    ).scalar_one_or_none()
+    # Lock all personal categories for this user so concurrent deletes
+    # serialize and cannot both pass the last-category guard.
+    all_categories = list(
+        db.execute(_personal_categories_query(user_id).with_for_update())
+        .scalars()
+        .all()
+    )
+    category = next((c for c in all_categories if c.id == category_id), None)
     if category is None:
         raise CategoryNotFoundError(category_id)
-
-    count = db.scalar(
-        select(func.count()).where(
-            UserCategory.user_id == user_id,
-            UserCategory.household_id.is_(None),
-        )
-    )
-    if count <= 1:
+    if len(all_categories) <= 1:
         raise LastCategoryError()
 
     db.delete(category)
