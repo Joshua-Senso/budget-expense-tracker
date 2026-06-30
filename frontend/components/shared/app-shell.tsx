@@ -1,3 +1,4 @@
+import Link from "next/link"
 import type { ReactNode } from "react"
 
 import { SignOutButton } from "./sign-out-button"
@@ -7,9 +8,23 @@ function AppShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-svh flex-col bg-background text-foreground">
       <header className="sticky top-0 z-10 border-b bg-card">
         <nav className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between px-6">
-          <span className="text-sm font-semibold tracking-tight">
-            Expense Tracker
-          </span>
+          <div className="flex items-center gap-6">
+            <span className="text-sm font-semibold tracking-tight">
+              Expense Tracker
+            </span>
+            <Link
+              href="/dashboard"
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Dashboard
+            </Link>
+            <Link
+              href="/categories"
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Categories
+            </Link>
+          </div>
           <SignOutButton />
         </nav>
       </header>
