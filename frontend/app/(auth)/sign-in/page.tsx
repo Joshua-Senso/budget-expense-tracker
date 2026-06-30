@@ -66,13 +66,13 @@ function SignInPage() {
     setLoading(provider)
     setError(null)
 
-    const { error } = await authClient.signIn.social({
+    const { error: signInError } = await authClient.signIn.social({
       provider,
-      callbackURL: "/",
+      callbackURL: `${window.location.origin}/`,
     })
 
-    if (error) {
-      setError(error.message ?? "Sign-in failed. Please try again.")
+    if (signInError) {
+      setError(signInError.message ?? "Sign-in failed. Please try again.")
       setLoading(null)
     }
   }
