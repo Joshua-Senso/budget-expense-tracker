@@ -43,6 +43,15 @@ describe("auth config", () => {
   })
 })
 
+describe("social providers", () => {
+  test("no providers are enabled when OAuth env vars are absent", async () => {
+    const { auth } = await import("../src/auth")
+    const providers = auth.options.socialProviders ?? {}
+
+    expect(Object.keys(providers)).toHaveLength(0)
+  })
+})
+
 describe("auth server", () => {
   test("GET / returns not found", async () => {
     const server = await import("../src/server")
