@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useForm } from "react-hook-form"
+import { useController, useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 
 import { Button } from "@/components/ui/button"
@@ -37,28 +37,24 @@ function CategoryFormContent({ category, onSuccess }: CategoryFormContentProps) 
   const update = useUpdateCategory()
   const isPending = create.isPending || update.isPending
 
-  const defaultColor = category?.color ?? "#6366f1"
-  const [colorPreview, setColorPreview] = useState(defaultColor)
   const [apiError, setApiError] = useState<string | null>(null)
 
   const {
     register,
     handleSubmit,
     setValue,
+    control,
     formState: { errors },
   } = useForm<CategoryFormValues>({
     resolver: zodResolver(categorySchema),
     defaultValues: {
       name: category?.name ?? "",
-      color: defaultColor,
+      color: category?.color ?? "#6366f1",
       expense_group: category?.expense_group ?? "other",
     },
   })
 
-  function handleColorChange(hex: string) {
-    setColorPreview(hex)
-    setValue("color", hex, { shouldValidate: true })
-  }
+  const { field: colorField } = useController({ name: "color", control })
 
   async function onSubmit(data: CategoryFormValues) {
     setApiError(null)
@@ -104,14 +100,16 @@ function CategoryFormContent({ category, onSuccess }: CategoryFormContentProps) 
             <input
               id="cat-color"
               type="color"
-              value={colorPreview}
-              onChange={(e) => handleColorChange(e.target.value)}
+              value={colorField.value}
+              onChange={(e) => colorField.onChange(e.target.value)}
+              onBlur={colorField.onBlur}
               className="size-9 cursor-pointer rounded-full border border-transparent bg-transparent p-0.5 outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
             />
             <Input
               placeholder="#6366f1"
-              value={colorPreview}
-              onChange={(e) => handleColorChange(e.target.value)}
+              value={colorField.value}
+              onChange={(e) => colorField.onChange(e.target.value)}
+              onBlur={colorField.onBlur}
               aria-invalid={!!errors.color}
               className="font-mono uppercase"
               maxLength={7}

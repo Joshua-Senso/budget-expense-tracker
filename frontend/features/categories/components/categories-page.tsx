@@ -5,11 +5,11 @@ import { PencilIcon, Trash2Icon, PlusIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 
+import { ApiError } from "@/lib/api-client"
 import { useCategories } from "../api/queries"
 import { useDeleteCategory } from "../api/mutations"
 import { CategoryColor } from "./category-color"
 import { CategoryFormDialog } from "./category-form-dialog"
-import { ApiError } from "@/lib/api-client"
 import type { Category } from "../schemas"
 
 function CategoriesPage() {
@@ -17,16 +17,21 @@ function CategoriesPage() {
   const deleteCategory = useDeleteCategory()
 
   const [dialogOpen, setDialogOpen] = useState(false)
-  const [editTarget, setEditTarget] = useState<Category | undefined>(undefined)
+  const [editTargetId, setEditTargetId] = useState<string | undefined>(undefined)
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({})
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(
+    new Set(),
+  )
+
+  const editTarget = categories?.find((c) => c.id === editTargetId)
 
   function openAdd() {
-    setEditTarget(undefined)
+    setEditTargetId(undefined)
     setDialogOpen(true)
   }
 
   function openEdit(category: Category) {
-    setEditTarget(category)
+    setEditTargetId(category.id)
     setDialogOpen(true)
   }
 
@@ -36,16 +41,21 @@ function CategoriesPage() {
       delete next[category.id]
       return next
     })
+    setPendingDeleteIds((prev) => new Set(prev).add(category.id))
     try {
       await deleteCategory.mutateAsync(category.id)
     } catch (err) {
       let message = "Could not delete category."
-      if (err instanceof ApiError) {
-        if (err.status === 409) {
-          message = "You must keep at least one category."
-        }
+      if (err instanceof ApiError && err.status === 409) {
+        message = "You must keep at least one category."
       }
       setDeleteErrors((prev) => ({ ...prev, [category.id]: message }))
+    } finally {
+      setPendingDeleteIds((prev) => {
+        const next = new Set(prev)
+        next.delete(category.id)
+        return next
+      })
     }
   }
 
@@ -108,7 +118,7 @@ function CategoriesPage() {
                     size="icon-sm"
                     aria-label={`Delete ${category.name}`}
                     onClick={() => handleDelete(category)}
-                    disabled={deleteCategory.isPending}
+                    disabled={pendingDeleteIds.has(category.id)}
                     className="text-destructive hover:text-destructive"
                   >
                     <Trash2Icon />
