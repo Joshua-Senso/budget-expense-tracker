@@ -6,9 +6,11 @@ import { AuthGuard } from "./auth-guard"
 
 function AppLayout({ children }: { children: ReactNode }) {
   return (
-    <AuthGuard>
-      <AppShell>{children}</AppShell>
-    </AuthGuard>
+    <div className="flex min-h-svh flex-col">
+      <AuthGuard>
+        <AppShell>{children}</AppShell>
+      </AuthGuard>
+    </div>
   )
 }
 
