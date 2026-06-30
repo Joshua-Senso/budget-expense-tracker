@@ -1,6 +1,7 @@
 import uuid
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.features.categories.models import UserCategory
@@ -44,5 +45,20 @@ def seed_default_categories(db: Session, user_id: str) -> list[UserCategory]:
         for name, color, group in _DEFAULT_CATEGORIES
     ]
     db.add_all(categories)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # A concurrent first request won the race and already inserted the defaults.
+        # Roll back our attempt and return whatever is now in the DB.
+        db.rollback()
+        return (
+            db.execute(
+                select(UserCategory).where(
+                    UserCategory.user_id == user_id,
+                    UserCategory.household_id.is_(None),
+                )
+            )
+            .scalars()
+            .all()
+        )
     return categories
