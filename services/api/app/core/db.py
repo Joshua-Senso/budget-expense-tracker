@@ -49,8 +49,7 @@ def session_scope() -> Iterator[Session]:
 
 
 def import_app_models() -> None:
-    # Import feature model modules here as they are added so Alembic sees them.
-    return None
+    import app.features.categories.models  # noqa: F401
 
 
 def is_app_table(name: str | None) -> bool:
