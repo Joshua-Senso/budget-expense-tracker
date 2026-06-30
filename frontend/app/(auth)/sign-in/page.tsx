@@ -68,7 +68,7 @@ function SignInPage() {
 
     const { error: signInError } = await authClient.signIn.social({
       provider,
-      callbackURL: `${window.location.origin}/`,
+      callbackURL: `${window.location.origin}/dashboard`,
     })
 
     if (signInError) {
