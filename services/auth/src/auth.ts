@@ -14,6 +14,11 @@ export const auth = betterAuth({
   baseURL: env.baseUrl,
   trustedOrigins: env.trustedOrigins,
   usePlural: true,
+  socialProviders: {
+    ...(env.google ? { google: env.google } : {}),
+    ...(env.github ? { github: env.github } : {}),
+    ...(env.discord ? { discord: env.discord } : {}),
+  },
   plugins: [
     jwt({
       jwks: {
