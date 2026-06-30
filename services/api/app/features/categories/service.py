@@ -48,7 +48,7 @@ def seed_default_categories(db: Session, user_id: str) -> list[UserCategory]:
         # Only recover from a unique-violation (SQLSTATE 23505) caused by a
         # concurrent first request winning the race. Any other IntegrityError
         # (e.g. CHECK constraint failure) is a real bug and must propagate.
-        if getattr(exc.orig, "pgcode", None) != "23505":
+        if getattr(exc.orig, "sqlstate", None) != "23505":
             raise
         db.rollback()
         return list(

@@ -16,9 +16,9 @@ def _mock_db(existing_count: int = 0) -> MagicMock:
     return db
 
 
-def _integrity_error(pgcode: str) -> IntegrityError:
+def _integrity_error(sqlstate: str) -> IntegrityError:
     orig = MagicMock()
-    orig.pgcode = pgcode
+    orig.sqlstate = sqlstate
     return IntegrityError("stmt", {}, orig)
 
 
