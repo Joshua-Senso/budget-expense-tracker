@@ -3,14 +3,15 @@
   "scripts": {
     "dev": "bun run --hot src/server.ts",
     "start": "bun run src/server.ts",
-    "schema:generate": "bunx @better-auth/cli@latest generate --config src/auth.ts",
-    "schema:migrate": "bunx @better-auth/cli@latest migrate --yes --config src/auth.ts",
+    "schema:generate": "bunx @better-auth/cli generate --config src/auth.ts",
+    "schema:migrate": "bunx @better-auth/cli migrate --yes --config src/auth.ts",
     "test": "bun test"
   },
   "dependencies": {
+    "@better-auth/cli": "1.4.22",
     "better-auth": "^1.6.0",
-    "pg": "^8.16.3",
-    "hono": "^4.12.26"
+    "hono": "^4.12.26",
+    "pg": "^8.16.3"
   },
   "devDependencies": {
     "@types/pg": "^8.15.6",
