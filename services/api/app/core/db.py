@@ -50,6 +50,7 @@ def session_scope() -> Iterator[Session]:
 
 def import_app_models() -> None:
     import app.features.categories.models  # noqa: F401
+    import app.features.expenses.models  # noqa: F401
 
 
 def is_app_table(name: str | None) -> bool:
