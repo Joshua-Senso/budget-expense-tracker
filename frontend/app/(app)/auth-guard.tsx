@@ -4,10 +4,13 @@ import * as React from "react"
 import { useRouter } from "next/navigation"
 
 import { authClient } from "@/lib/auth-client"
+import { useIdleSignout } from "@/hooks/use-idle-signout"
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const { data: session, isPending } = authClient.useSession()
+
+  useIdleSignout({ enabled: !!session })
 
   React.useEffect(() => {
     if (!isPending && !session) {
