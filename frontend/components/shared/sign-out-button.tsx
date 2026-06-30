@@ -12,8 +12,12 @@ function SignOutButton() {
 
   async function handleSignOut() {
     setLoading(true)
-    await authClient.signOut()
-    router.replace("/sign-in")
+    try {
+      await authClient.signOut()
+      router.replace("/sign-in")
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
