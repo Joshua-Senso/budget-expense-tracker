@@ -17,6 +17,18 @@ _DEFAULT_CATEGORIES: list[tuple[str, str, str]] = [
 ]
 
 
+class CategoryNotFoundError(Exception):
+    pass
+
+
+class DuplicateCategoryNameError(Exception):
+    pass
+
+
+class LastCategoryError(Exception):
+    pass
+
+
 def seed_default_categories(db: Session, user_id: str) -> list[UserCategory]:
     """Insert default personal categories for a new user.
 
@@ -62,3 +74,92 @@ def seed_default_categories(db: Session, user_id: str) -> list[UserCategory]:
             .all()
         )
     return categories
+
+
+def _personal_categories_query(user_id: str):
+    return select(UserCategory).where(
+        UserCategory.user_id == user_id,
+        UserCategory.household_id.is_(None),
+    )
+
+
+def list_categories(db: Session, user_id: str) -> list[UserCategory]:
+    seed_default_categories(db, user_id)
+    return list(
+        db.execute(_personal_categories_query(user_id).order_by(UserCategory.name))
+        .scalars()
+        .all()
+    )
+
+
+def create_category(
+    db: Session,
+    user_id: str,
+    name: str,
+    color: str,
+    expense_group: str,
+) -> UserCategory:
+    category = UserCategory(
+        user_id=user_id, name=name, color=color, expense_group=expense_group
+    )
+    db.add(category)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if getattr(exc.orig, "sqlstate", None) == "23505":
+            raise DuplicateCategoryNameError(name) from exc
+        raise
+    return category
+
+
+def update_category(
+    db: Session,
+    user_id: str,
+    category_id: str,
+    name: str | None = None,
+    color: str | None = None,
+    expense_group: str | None = None,
+) -> UserCategory:
+    category = db.execute(
+        _personal_categories_query(user_id).where(UserCategory.id == category_id)
+    ).scalar_one_or_none()
+    if category is None:
+        raise CategoryNotFoundError(category_id)
+
+    for attr, value in [
+        ("name", name),
+        ("color", color),
+        ("expense_group", expense_group),
+    ]:
+        if value is not None:
+            setattr(category, attr, value)
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if getattr(exc.orig, "sqlstate", None) == "23505":
+            raise DuplicateCategoryNameError(name) from exc
+        raise
+    return category
+
+
+def delete_category(db: Session, user_id: str, category_id: str) -> None:
+    category = db.execute(
+        _personal_categories_query(user_id).where(UserCategory.id == category_id)
+    ).scalar_one_or_none()
+    if category is None:
+        raise CategoryNotFoundError(category_id)
+
+    count = db.scalar(
+        select(func.count()).where(
+            UserCategory.user_id == user_id,
+            UserCategory.household_id.is_(None),
+        )
+    )
+    if count <= 1:
+        raise LastCategoryError()
+
+    db.delete(category)
+    db.commit()
