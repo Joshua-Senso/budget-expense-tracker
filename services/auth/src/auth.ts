@@ -41,10 +41,12 @@ export const auth = betterAuth({
   ],
   account: {
     accountLinking: {
-      // All three providers are trusted so implicit linking fires on email match
-      // even when the provider doesn't return emailVerified: true (e.g. GitHub,
-      // Discord). This keeps user_id stable across linked providers.
-      trustedProviders: ["google", "github", "discord"],
+      // Only trust Google, which guarantees verified email ownership before
+      // returning the identity. GitHub and Discord report emailVerified too, so
+      // verified users still auto-link via the default gate — trusting them here
+      // would additionally link unverified-email identities and open an
+      // account-takeover vector.
+      trustedProviders: ["google"],
     },
   },
   advanced: {

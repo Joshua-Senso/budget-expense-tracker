@@ -44,11 +44,13 @@ describe("auth config", () => {
 })
 
 describe("account linking", () => {
-  test("all three OAuth providers are trusted for implicit account linking", async () => {
+  test("only google is a trusted provider — github and discord rely on emailVerified", async () => {
     const { auth } = await import("../src/auth")
-    const trusted = auth.options.account?.accountLinking?.trustedProviders
+    const trusted = auth.options.account?.accountLinking?.trustedProviders as string[] | undefined
 
-    expect(trusted).toEqual(expect.arrayContaining(["google", "github", "discord"]))
+    expect(trusted).toContain("google")
+    expect(trusted).not.toContain("github")
+    expect(trusted).not.toContain("discord")
   })
 })
 
