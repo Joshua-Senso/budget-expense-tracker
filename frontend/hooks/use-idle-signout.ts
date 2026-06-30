@@ -19,8 +19,11 @@ export function useIdleSignout({ enabled }: { enabled: boolean }) {
 
     let lastActivity = Date.now()
     let throttleTimer: ReturnType<typeof setTimeout> | null = null
+    let signedOut = false
 
     async function signOutNow() {
+      if (signedOut) return
+      signedOut = true
       try {
         await authClient.signOut()
       } finally {
