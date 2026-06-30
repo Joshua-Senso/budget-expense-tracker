@@ -8,9 +8,9 @@ import { Providers } from "@/providers/providers"
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
 
 export const metadata: Metadata = {
-  title: "Expense Tracker — Coming soon",
+  title: "Expense Tracker",
   description:
-    "Private budgeting for you and your household: multi-currency expense tracking, monthly budget insights, and shared household budgets. Coming soon.",
+    "Private budgeting for you and your household: multi-currency expense tracking, monthly budget insights, and shared household budgets.",
 }
 
 const fontMono = Geist_Mono({

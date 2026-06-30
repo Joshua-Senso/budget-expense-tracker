@@ -3,10 +3,15 @@ import { expect, test } from "vitest"
 
 import Page from "./page"
 
-test("coming soon page shows the product name and status", () => {
+test("landing page shows product name, features, and sign-in CTA", () => {
   render(<Page />)
   expect(
     screen.getByRole("heading", { name: "Expense Tracker" }),
   ).toBeInTheDocument()
-  expect(screen.getByText("Coming soon")).toBeInTheDocument()
+  expect(
+    screen.getByRole("link", { name: /sign in to get started/i }),
+  ).toHaveAttribute("href", "/sign-in")
+  expect(
+    screen.getByRole("heading", { name: /multi-currency tracking/i }),
+  ).toBeInTheDocument()
 })
