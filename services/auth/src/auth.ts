@@ -39,6 +39,14 @@ export const auth = betterAuth({
       },
     }),
   ],
+  account: {
+    accountLinking: {
+      // All three providers are trusted so implicit linking fires on email match
+      // even when the provider doesn't return emailVerified: true (e.g. GitHub,
+      // Discord). This keeps user_id stable across linked providers.
+      trustedProviders: ["google", "github", "discord"],
+    },
+  },
   advanced: {
     database: {
       generateId: "uuid",

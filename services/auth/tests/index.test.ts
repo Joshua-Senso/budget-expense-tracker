@@ -43,6 +43,15 @@ describe("auth config", () => {
   })
 })
 
+describe("account linking", () => {
+  test("all three OAuth providers are trusted for implicit account linking", async () => {
+    const { auth } = await import("../src/auth")
+    const trusted = auth.options.account?.accountLinking?.trustedProviders
+
+    expect(trusted).toEqual(expect.arrayContaining(["google", "github", "discord"]))
+  })
+})
+
 describe("social providers", () => {
   test("no providers are enabled when OAuth env vars are absent", async () => {
     const { auth } = await import("../src/auth")
