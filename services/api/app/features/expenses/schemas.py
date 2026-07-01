@@ -1,6 +1,6 @@
 import re
 from datetime import date, datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from pydantic import BaseModel, field_validator
 
@@ -19,7 +19,10 @@ def _validate_currency(v: str) -> str:
 def _validate_amount(v: Decimal) -> Decimal:
     if v <= 0:
         raise ValueError("amount must be positive")
-    quantized = v.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    try:
+        quantized = v.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        raise ValueError("amount exceeds maximum allowed value")
     if quantized > _MAX_AMOUNT:
         raise ValueError("amount exceeds maximum allowed value")
     return quantized

@@ -126,6 +126,16 @@ def test_create_amount_overflow_fails() -> None:
         )
 
 
+def test_create_amount_extreme_magnitude_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseCreate(
+            category_id="cat-1",
+            description="Lunch",
+            amount=Decimal("1e30"),
+            spent_on=date(2026, 7, 1),
+        )
+
+
 # --- ExpenseUpdate ---
 
 
@@ -169,3 +179,8 @@ def test_update_amount_quantized_to_2dp() -> None:
 def test_update_amount_overflow_fails() -> None:
     with pytest.raises(ValidationError):
         ExpenseUpdate(amount=Decimal("10000000000"))
+
+
+def test_update_amount_extreme_magnitude_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseUpdate(amount=Decimal("1e30"))
