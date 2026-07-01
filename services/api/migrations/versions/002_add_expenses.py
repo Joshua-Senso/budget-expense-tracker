@@ -52,11 +52,9 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index("ix_expenses_user_id", "expenses", ["user_id"])
     op.create_index("ix_expenses_user_spent_on", "expenses", ["user_id", "spent_on"])
 
 
 def downgrade() -> None:
     op.drop_index("ix_expenses_user_spent_on", table_name="expenses")
-    op.drop_index("ix_expenses_user_id", table_name="expenses")
     op.drop_table("expenses")

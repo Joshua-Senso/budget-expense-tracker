@@ -44,6 +44,28 @@ def test_create_currency_uppercased() -> None:
     assert e.currency == "USD"
 
 
+def test_create_currency_too_long_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseCreate(
+            category_id="cat-1",
+            description="Lunch",
+            amount=Decimal("100"),
+            currency="peso",
+            spent_on=date(2026, 7, 1),
+        )
+
+
+def test_create_currency_too_short_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseCreate(
+            category_id="cat-1",
+            description="Lunch",
+            amount=Decimal("100"),
+            currency="PH",
+            spent_on=date(2026, 7, 1),
+        )
+
+
 def test_create_description_stripped() -> None:
     e = ExpenseCreate(
         category_id="cat-1",
@@ -84,6 +106,26 @@ def test_create_negative_amount_fails() -> None:
         )
 
 
+def test_create_amount_quantized_to_2dp() -> None:
+    e = ExpenseCreate(
+        category_id="cat-1",
+        description="Lunch",
+        amount=Decimal("150.999"),
+        spent_on=date(2026, 7, 1),
+    )
+    assert e.amount == Decimal("151.00")
+
+
+def test_create_amount_overflow_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseCreate(
+            category_id="cat-1",
+            description="Lunch",
+            amount=Decimal("10000000000"),
+            spent_on=date(2026, 7, 1),
+        )
+
+
 # --- ExpenseUpdate ---
 
 
@@ -112,3 +154,18 @@ def test_update_zero_amount_fails() -> None:
 def test_update_currency_uppercased() -> None:
     u = ExpenseUpdate(currency="eur")
     assert u.currency == "EUR"
+
+
+def test_update_currency_too_long_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseUpdate(currency="euro")
+
+
+def test_update_amount_quantized_to_2dp() -> None:
+    u = ExpenseUpdate(amount=Decimal("99.999"))
+    assert u.amount == Decimal("100.00")
+
+
+def test_update_amount_overflow_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseUpdate(amount=Decimal("10000000000"))
