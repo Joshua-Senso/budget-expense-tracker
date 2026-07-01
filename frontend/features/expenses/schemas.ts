@@ -1,6 +1,7 @@
 import { z } from "zod"
 
 const dateRegex = /^\d{4}-\d{2}-\d{2}$/
+const maxAmount = 9_999_999_999.99
 
 function isValidDate(value: string) {
   const date = new Date(`${value}T00:00:00Z`)
@@ -12,7 +13,11 @@ export const expenseSchema = z.object({
   description: z.string().trim().min(1, "Description is required"),
   amount: z
     .number({ error: "Amount is required" })
-    .positive("Amount must be positive"),
+    .positive("Amount must be positive")
+    .max(maxAmount, "Amount is too large")
+    .refine((value) => Number.isInteger(value * 100), {
+      message: "Use no more than 2 decimal places",
+    }),
   currency: z
     .string()
     .trim()
@@ -30,9 +35,10 @@ export type ExpenseFormValues = z.infer<typeof expenseSchema>
 
 export type ExpensePayload = Omit<ExpenseFormValues, "expense_group">
 
-export type Expense = ExpensePayload & {
+export type Expense = Omit<ExpensePayload, "amount"> & {
   id: string
   user_id: string
+  amount: string
   created_at: string
   updated_at: string
 }

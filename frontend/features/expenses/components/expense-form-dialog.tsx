@@ -1,8 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm, useWatch } from "react-hook-form"
+import type { DefaultValues } from "react-hook-form"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -53,6 +54,20 @@ function getDefaultGroup(expense?: Expense, categories?: Category[]) {
   return category?.expense_group ?? "other"
 }
 
+function getDefaultValues(
+  expense?: Expense,
+  categories?: Category[],
+): DefaultValues<ExpenseFormValues> {
+  return {
+    description: expense?.description ?? "",
+    amount: expense ? Number(expense.amount) : undefined,
+    currency: expense?.currency ?? "PHP",
+    spent_on: expense?.spent_on ?? todayLocalDate(),
+    expense_group: getDefaultGroup(expense, categories),
+    category_id: expense?.category_id ?? "",
+  }
+}
+
 interface ExpenseFormContentProps {
   expense?: Expense
   onSuccess: () => void
@@ -68,15 +83,15 @@ function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
 
   const form = useForm<ExpenseFormValues>({
     resolver: zodResolver(expenseSchema),
-    defaultValues: {
-      description: expense?.description ?? "",
-      amount: expense?.amount ?? 0,
-      currency: expense?.currency ?? "PHP",
-      spent_on: expense?.spent_on ?? todayLocalDate(),
-      expense_group: getDefaultGroup(expense, categories),
-      category_id: expense?.category_id ?? "",
-    },
+    defaultValues: getDefaultValues(expense),
   })
+  const { reset } = form
+
+  useEffect(() => {
+    if (expense && categories) {
+      reset(getDefaultValues(expense, categories))
+    }
+  }, [categories, expense, reset])
 
   const selectedGroup = useWatch({
     control: form.control,
@@ -144,7 +159,11 @@ function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
                   step="0.01"
                   placeholder="0.00"
                   {...field}
-                  onChange={(event) => field.onChange(event.target.valueAsNumber)}
+                  value={field.value ?? ""}
+                  onChange={(event) => {
+                    const value = event.target.valueAsNumber
+                    field.onChange(Number.isNaN(value) ? undefined : value)
+                  }}
                 />
               </FormControl>
               <FormMessage />
