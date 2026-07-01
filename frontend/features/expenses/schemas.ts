@@ -15,7 +15,7 @@ export const expenseSchema = z.object({
     .number({ error: "Amount is required" })
     .positive("Amount must be positive")
     .max(maxAmount, "Amount is too large")
-    .refine((value) => Number.isInteger(value * 100), {
+    .refine((value) => Number(value.toFixed(2)) === value, {
       message: "Use no more than 2 decimal places",
     }),
   currency: z
