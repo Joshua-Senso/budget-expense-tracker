@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm, useWatch } from "react-hook-form"
 import type { DefaultValues } from "react-hook-form"
@@ -49,6 +49,27 @@ function todayLocalDate() {
   return `${year}-${month}-${day}`
 }
 
+function getErrorDetail(err: ApiError) {
+  return typeof err.body === "object" && err.body !== null && "detail" in err.body
+    ? String((err.body as { detail?: unknown }).detail)
+    : null
+}
+
+function getSubmitErrorMessage(err: unknown) {
+  if (err instanceof ApiError && err.status === 404) {
+    const detail = getErrorDetail(err)
+
+    if (detail === "Category not found.") {
+      return "Choose one of your categories before saving."
+    }
+    if (detail === "Expense not found.") {
+      return "This expense no longer exists. Refresh the page and try again."
+    }
+  }
+
+  return "Could not save expense. Please try again."
+}
+
 function getDefaultGroup(expense?: Expense, categories?: Category[]) {
   const category = categories?.find((c) => c.id === expense?.category_id)
   return category?.expense_group ?? "other"
@@ -86,9 +107,11 @@ function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
     defaultValues: getDefaultValues(expense),
   })
   const { reset } = form
+  const hasAppliedCategoryDefaults = useRef(false)
 
   useEffect(() => {
-    if (expense && categories) {
+    if (expense && categories && !hasAppliedCategoryDefaults.current) {
+      hasAppliedCategoryDefaults.current = true
       reset(getDefaultValues(expense, categories))
     }
   }, [categories, expense, reset])
@@ -116,11 +139,7 @@ function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
       }
       onSuccess()
     } catch (err) {
-      if (err instanceof ApiError && err.status === 404) {
-        setApiError("Choose one of your categories before saving.")
-      } else {
-        setApiError("Could not save expense. Please try again.")
-      }
+      setApiError(getSubmitErrorMessage(err))
     }
   }
 
