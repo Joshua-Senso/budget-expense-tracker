@@ -7,14 +7,16 @@ import { queryKeys } from "@/lib/query-keys"
 import { toMonthKey } from "@/stores/month-store"
 import type { SelectedMonth } from "@/stores/month-store"
 
-import type { Expense } from "../schemas"
+import type { DashboardSummaryData } from "../schemas"
 
-function useExpenses(month: SelectedMonth) {
+function useDashboardSummary(month: SelectedMonth) {
+  const monthKey = toMonthKey(month)
+
   return useQuery({
-    queryKey: queryKeys.expenses(toMonthKey(month)),
+    queryKey: queryKeys.dashboard(monthKey),
     queryFn: () =>
-      apiFetch<Expense[]>(`/expenses?year=${month.year}&month=${month.month}`),
+      apiFetch<DashboardSummaryData>(`/dashboard/summary/${monthKey}`),
   })
 }
 
-export { useExpenses }
+export { useDashboardSummary }

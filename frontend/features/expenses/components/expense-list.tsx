@@ -1,30 +1,22 @@
 "use client"
 
 import { useMemo, useState } from "react"
-import { ChevronLeftIcon, ChevronRightIcon, PencilIcon, Trash2Icon } from "lucide-react"
+import { PencilIcon, Trash2Icon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { CategoryColor, useCategories } from "@/features/categories"
 import { ApiError } from "@/lib/api-client"
-import { formatCurrency, formatExpenseDate, formatMonthLabel } from "@/lib/format"
+import {
+  formatCurrency,
+  formatExpenseDate,
+  formatMonthLabel,
+} from "@/lib/format"
+import { useMonthStore } from "@/stores/month-store"
 
 import { useDeleteExpense } from "../api/mutations"
 import { useExpenses } from "../api/queries"
-import type { ExpenseMonth } from "../api/queries"
 import { ExpenseFormDialog } from "./expense-form-dialog"
 import type { Expense } from "../schemas"
-
-function getCurrentMonth(): ExpenseMonth {
-  const now = new Date()
-
-  return { year: now.getFullYear(), month: now.getMonth() + 1 }
-}
-
-function shiftMonth({ year, month }: ExpenseMonth, delta: number): ExpenseMonth {
-  const date = new Date(Date.UTC(year, month - 1 + delta, 1))
-
-  return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 }
-}
 
 function getDeleteErrorMessage(err: unknown) {
   if (err instanceof ApiError && err.status === 404) {
@@ -35,7 +27,7 @@ function getDeleteErrorMessage(err: unknown) {
 }
 
 function ExpenseList() {
-  const [selectedMonth, setSelectedMonth] = useState<ExpenseMonth>(getCurrentMonth)
+  const selectedMonth = useMonthStore(({ year, month }) => ({ year, month }))
   const {
     data: expenses,
     isLoading: expensesLoading,
@@ -48,11 +40,14 @@ function ExpenseList() {
   const [editTarget, setEditTarget] = useState<Expense | undefined>(undefined)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({})
-  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(new Set())
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(
+    new Set()
+  )
 
   const categoryById = useMemo(
-    () => new Map((categories ?? []).map((category) => [category.id, category])),
-    [categories],
+    () =>
+      new Map((categories ?? []).map((category) => [category.id, category])),
+    [categories]
   )
 
   function openEdit(expense: Expense) {
@@ -77,7 +72,10 @@ function ExpenseList() {
     try {
       await deleteExpense.mutateAsync(expense.id)
     } catch (err) {
-      setDeleteErrors((prev) => ({ ...prev, [expense.id]: getDeleteErrorMessage(err) }))
+      setDeleteErrors((prev) => ({
+        ...prev,
+        [expense.id]: getDeleteErrorMessage(err),
+      }))
     } finally {
       setPendingDeleteIds((prev) => {
         const next = new Set(prev)
@@ -89,31 +87,11 @@ function ExpenseList() {
 
   return (
     <section className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold tracking-tight">
-          {formatMonthLabel(selectedMonth.year, selectedMonth.month)}
-        </h2>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Previous month"
-            onClick={() => setSelectedMonth((month) => shiftMonth(month, -1))}
-          >
-            <ChevronLeftIcon />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Next month"
-            onClick={() => setSelectedMonth((month) => shiftMonth(month, 1))}
-          >
-            <ChevronRightIcon />
-          </Button>
-        </div>
-      </div>
+      <h2 className="text-lg font-semibold tracking-tight">Expenses</h2>
 
-      {expensesLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {expensesLoading && (
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      )}
 
       {expensesError && (
         <p className="text-sm text-destructive" role="alert">
@@ -123,13 +101,15 @@ function ExpenseList() {
 
       {categoriesError && !expensesError && (
         <p className="text-sm text-destructive" role="alert">
-          Failed to load categories. Category names and colors may be unavailable.
+          Failed to load categories. Category names and colors may be
+          unavailable.
         </p>
       )}
 
       {!expensesLoading && !expensesError && monthExpenses.length === 0 && (
         <p className="text-sm text-muted-foreground">
-          No expenses recorded for {formatMonthLabel(selectedMonth.year, selectedMonth.month)}.
+          No expenses recorded for{" "}
+          {formatMonthLabel(selectedMonth.year, selectedMonth.month)}.
         </p>
       )}
 
@@ -141,7 +121,10 @@ function ExpenseList() {
             return (
               <li key={expense.id} className="flex flex-col gap-1">
                 <div className="flex items-center gap-3 rounded-2xl border bg-card px-4 py-3">
-                  <CategoryColor color={category?.color ?? "#9ca3af"} className="size-5" />
+                  <CategoryColor
+                    color={category?.color ?? "#9ca3af"}
+                    className="size-5"
+                  />
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
