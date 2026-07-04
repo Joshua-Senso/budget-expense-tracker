@@ -119,3 +119,22 @@ def test_get_dashboard_summary_uses_correct_month_bounds() -> None:
     query_str = str(executed_query.compile(compile_kwargs={"literal_binds": True}))
     assert "2026-02-01" in query_str
     assert "2026-02-28" in query_str
+
+
+def test_get_dashboard_summary_query_scopes_categories_to_owner() -> None:
+    # Regression guard: the join must not rely solely on expenses.user_id —
+    # it must also assert user_categories.user_id/household_id so a future
+    # write-time bypass can't leak another user's category data here.
+    db = _mock_db()
+    db.execute.return_value.all.return_value = []
+
+    with patch(
+        "app.features.dashboard.service.get_monthly_setting",
+        return_value=_make_setting(Decimal("1000.00")),
+    ):
+        get_dashboard_summary(db, "user-1", "2026-07")
+
+    executed_query = db.execute.call_args[0][0]
+    query_str = str(executed_query.compile(compile_kwargs={"literal_binds": True}))
+    assert "user_categories.user_id = 'user-1'" in query_str
+    assert "user_categories.household_id IS NULL" in query_str

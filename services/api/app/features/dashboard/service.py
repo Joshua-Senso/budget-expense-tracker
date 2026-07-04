@@ -1,6 +1,7 @@
 from calendar import monthrange
 from datetime import date
 from decimal import Decimal
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -22,7 +23,7 @@ def _month_bounds(month_key: str) -> tuple[date, date]:
 
 def _category_totals(
     db: Session, user_id: str, month_start: date, month_end: date
-) -> list[tuple[str, str, str, str, Decimal]]:
+) -> list[Any]:
     query = (
         select(
             UserCategory.id,
@@ -36,6 +37,8 @@ def _category_totals(
             Expense.user_id == user_id,
             Expense.household_id.is_(None),
             Expense.spent_on.between(month_start, month_end),
+            UserCategory.user_id == user_id,
+            UserCategory.household_id.is_(None),
         )
         .group_by(
             UserCategory.id,
