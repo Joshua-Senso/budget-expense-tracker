@@ -96,7 +96,11 @@ interface ExpenseFormContentProps {
 
 function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
   const isEdit = !!expense
-  const { data: categories, isLoading: categoriesLoading } = useCategories()
+  const {
+    data: categories,
+    isLoading: categoriesLoading,
+    isError: categoriesError,
+  } = useCategories()
   const create = useCreateExpense()
   const update = useUpdateExpense()
   const isPending = create.isPending || update.isPending
@@ -234,7 +238,9 @@ function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
                 value={field.value}
                 onValueChange={(value) => {
                   field.onChange(value)
-                  form.setValue("category_id", "", { shouldValidate: true })
+                  form.setValue("category_id", "", {
+                    shouldValidate: form.formState.isSubmitted,
+                  })
                 }}
               >
                 <FormControl>
@@ -260,7 +266,9 @@ function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
               <FormLabel>Category</FormLabel>
               <Select
                 value={field.value}
-                disabled={categoriesLoading || categoryOptions.length === 0}
+                disabled={
+                  categoriesLoading || categoriesError || categoryOptions.length === 0
+                }
                 onValueChange={field.onChange}
               >
                 <FormControl>
@@ -281,7 +289,12 @@ function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
                   ))}
                 </SelectContent>
               </Select>
-              {categoryOptions.length === 0 && !categoriesLoading && (
+              {categoriesError && (
+                <p className="text-xs text-destructive" role="alert">
+                  Failed to load categories. Refresh the page and try again.
+                </p>
+              )}
+              {!categoriesError && categoryOptions.length === 0 && !categoriesLoading && (
                 <p className="text-xs text-muted-foreground">
                   Add a {selectedGroup} category before saving this expense.
                 </p>
