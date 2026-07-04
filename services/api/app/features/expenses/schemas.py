@@ -7,6 +7,8 @@ from pydantic import BaseModel, field_validator
 
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 _MAX_AMOUNT = Decimal("9999999999.99")
+_MIN_INSTALLMENT_TOTAL = 2
+_MAX_INSTALLMENT_TOTAL = 60
 
 
 def _validate_currency(v: str) -> str:
@@ -54,6 +56,43 @@ class ExpenseCreate(BaseModel):
         return _validate_currency(v)
 
 
+class ExpenseInstallmentCreate(BaseModel):
+    category_id: str
+    description: str
+    amount: Decimal
+    currency: str = "PHP"
+    spent_on: date
+    installment_total: int
+
+    @field_validator("description")
+    @classmethod
+    def description_nonempty(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("description must not be blank")
+        return stripped
+
+    @field_validator("amount")
+    @classmethod
+    def amount_valid(cls, v: Decimal) -> Decimal:
+        return _validate_amount(v)
+
+    @field_validator("currency")
+    @classmethod
+    def currency_valid(cls, v: str) -> str:
+        return _validate_currency(v)
+
+    @field_validator("installment_total")
+    @classmethod
+    def installment_total_valid(cls, v: int) -> int:
+        if not (_MIN_INSTALLMENT_TOTAL <= v <= _MAX_INSTALLMENT_TOTAL):
+            raise ValueError(
+                f"installment_total must be between {_MIN_INSTALLMENT_TOTAL} "
+                f"and {_MAX_INSTALLMENT_TOTAL}"
+            )
+        return v
+
+
 class ExpenseUpdate(BaseModel):
     category_id: str | None = None
     description: str | None = None
@@ -90,6 +129,10 @@ class ExpenseResponse(BaseModel):
     amount: Decimal
     currency: str
     spent_on: date
+    installment_group_id: str | None = None
+    installment_index: int | None = None
+    installment_total: int | None = None
+    original_description: str | None = None
     created_at: datetime
     updated_at: datetime
 

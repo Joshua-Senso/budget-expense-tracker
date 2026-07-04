@@ -1,10 +1,17 @@
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import get_current_user_id
 from app.features.expenses import service
-from app.features.expenses.schemas import ExpenseCreate, ExpenseResponse, ExpenseUpdate
+from app.features.expenses.schemas import (
+    ExpenseCreate,
+    ExpenseInstallmentCreate,
+    ExpenseResponse,
+    ExpenseUpdate,
+)
 from app.features.expenses.service import CategoryOwnershipError, ExpenseNotFoundError
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
@@ -40,6 +47,31 @@ def create_expense(
         raise HTTPException(status_code=404, detail="Category not found.")
 
 
+@router.post(
+    "/installments",
+    response_model=list[ExpenseResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+def create_installment_expenses(
+    body: ExpenseInstallmentCreate,
+    user_id: str = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> list[ExpenseResponse]:
+    try:
+        return service.create_installment_expenses(
+            db,
+            user_id,
+            body.category_id,
+            body.description,
+            body.amount,
+            body.currency,
+            body.spent_on,
+            body.installment_total,
+        )
+    except CategoryOwnershipError:
+        raise HTTPException(status_code=404, detail="Category not found.")
+
+
 @router.patch("/{expense_id}", response_model=ExpenseResponse)
 def update_expense(
     expense_id: str,
@@ -67,10 +99,11 @@ def update_expense(
 @router.delete("/{expense_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_expense(
     expense_id: str,
+    scope: Literal["row", "group"] = Query(default="row"),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> None:
     try:
-        service.delete_expense(db, user_id, expense_id)
+        service.delete_expense(db, user_id, expense_id, scope=scope)
     except ExpenseNotFoundError:
         raise HTTPException(status_code=404, detail="Expense not found.")
