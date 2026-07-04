@@ -63,12 +63,13 @@ function getFilterLabel(
 }
 
 function ExpenseList() {
-  const selectedMonth = useMonthStore(({ year, month }) => ({ year, month }))
+  const year = useMonthStore((state) => state.year)
+  const month = useMonthStore((state) => state.month)
   const {
     data: expenses,
     isLoading: expensesLoading,
     isError: expensesError,
-  } = useExpenses(selectedMonth)
+  } = useExpenses({ year, month })
   const {
     data: categories,
     isLoading: categoriesLoading,
@@ -178,7 +179,7 @@ function ExpenseList() {
       {!isLoading && !expensesError && monthExpenses.length === 0 && (
         <p className="text-sm text-muted-foreground">
           No expenses recorded for{" "}
-          {formatMonthLabel(selectedMonth.year, selectedMonth.month)}.
+          {formatMonthLabel(year, month)}.
         </p>
       )}
 
@@ -188,7 +189,7 @@ function ExpenseList() {
         filteredExpenses.length === 0 && (
           <p className="text-sm text-muted-foreground">
             No {filterLabel} expenses for{" "}
-            {formatMonthLabel(selectedMonth.year, selectedMonth.month)}.
+            {formatMonthLabel(year, month)}.
           </p>
         )}
 

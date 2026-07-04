@@ -108,7 +108,9 @@ function SalaryForm({ month, setting }: SalaryFormProps) {
 }
 
 function SalaryInput() {
-  const month = useMonthStore(({ year, month }) => ({ year, month }))
+  const year = useMonthStore((state) => state.year)
+  const monthNumber = useMonthStore((state) => state.month)
+  const month = { year, month: monthNumber }
   const { data: setting, isLoading, isError } = useMonthlySetting(month)
 
   if (isLoading) {
