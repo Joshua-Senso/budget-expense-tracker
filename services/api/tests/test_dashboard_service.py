@@ -2,7 +2,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 from app.features.budget.service import MonthlySettingNotFoundError
-from app.features.dashboard.service import get_dashboard_summary
+from app.features.dashboard.service import get_dashboard_summary, get_yearly_overview
 
 
 def _mock_db() -> MagicMock:
@@ -133,6 +133,80 @@ def test_get_dashboard_summary_query_scopes_categories_to_owner() -> None:
         return_value=_make_setting(Decimal("1000.00")),
     ):
         get_dashboard_summary(db, "user-1", "2026-07")
+
+    executed_query = db.execute.call_args[0][0]
+    query_str = str(executed_query.compile(compile_kwargs={"literal_binds": True}))
+    assert "user_categories.user_id = 'user-1'" in query_str
+    assert "user_categories.household_id IS NULL" in query_str
+
+
+# --- get_yearly_overview ---
+
+
+def test_get_yearly_overview_buckets_by_month_and_group() -> None:
+    db = _mock_db()
+    db.execute.return_value.all.return_value = [
+        (2, "card", Decimal("300.00")),
+        (2, "other", Decimal("50.00")),
+        (7, "other", Decimal("100.00")),
+    ]
+
+    result = get_yearly_overview(db, "user-1", 2026)
+
+    assert len(result["months"]) == 12
+    feb = result["months"][1]
+    assert feb["month_key"] == "2026-02"
+    assert feb["card_total"] == Decimal("300.00")
+    assert feb["other_total"] == Decimal("50.00")
+    assert feb["month_total"] == Decimal("350.00")
+
+    jul = result["months"][6]
+    assert jul["card_total"] == Decimal("0")
+    assert jul["other_total"] == Decimal("100.00")
+    assert jul["month_total"] == Decimal("100.00")
+
+
+def test_get_yearly_overview_no_expenses_returns_zero_totals_for_all_months() -> None:
+    db = _mock_db()
+    db.execute.return_value.all.return_value = []
+
+    result = get_yearly_overview(db, "user-1", 2026)
+
+    assert len(result["months"]) == 12
+    assert all(month["month_total"] == Decimal("0") for month in result["months"])
+    assert result["year_total"] == Decimal("0")
+
+
+def test_get_yearly_overview_computes_year_total() -> None:
+    db = _mock_db()
+    db.execute.return_value.all.return_value = [
+        (1, "card", Decimal("100.00")),
+        (6, "other", Decimal("250.00")),
+        (12, "card", Decimal("75.00")),
+    ]
+
+    result = get_yearly_overview(db, "user-1", 2026)
+
+    assert result["year_total"] == Decimal("425.00")
+
+
+def test_get_yearly_overview_uses_correct_year_bounds() -> None:
+    db = _mock_db()
+    db.execute.return_value.all.return_value = []
+
+    get_yearly_overview(db, "user-1", 2026)
+
+    executed_query = db.execute.call_args[0][0]
+    query_str = str(executed_query.compile(compile_kwargs={"literal_binds": True}))
+    assert "2026-01-01" in query_str
+    assert "2026-12-31" in query_str
+
+
+def test_get_yearly_overview_query_scopes_categories_to_owner() -> None:
+    db = _mock_db()
+    db.execute.return_value.all.return_value = []
+
+    get_yearly_overview(db, "user-1", 2026)
 
     executed_query = db.execute.call_args[0][0]
     query_str = str(executed_query.compile(compile_kwargs={"literal_binds": True}))
