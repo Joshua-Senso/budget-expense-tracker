@@ -28,10 +28,20 @@ describe("auth config", () => {
     expect(subject).toBe("user-id")
   })
 
-  test("keeps Better Auth-owned tables plural", async () => {
+  test("maps every model to its actual (already-plural) table name", async () => {
+    const { getAuthTables } = await import("better-auth/db")
     const { auth } = await import("../src/auth")
+    const tables = getAuthTables(auth.options)
 
-    expect(auth.options.usePlural).toBe(true)
+    expect(tables.user?.modelName).toBe("users")
+    expect(tables.session?.modelName).toBe("sessions")
+    expect(tables.account?.modelName).toBe("accounts")
+    expect(tables.verification?.modelName).toBe("verifications")
+    expect(tables.organization?.modelName).toBe("organizations")
+    expect(tables.member?.modelName).toBe("members")
+    expect(tables.invitation?.modelName).toBe("invitations")
+    // "jwks" is already plural — must NOT become "jwkss".
+    expect(tables.jwks?.modelName).toBe("jwks")
   })
 
   test("enables JWT/JWKS and organization plugins", async () => {
