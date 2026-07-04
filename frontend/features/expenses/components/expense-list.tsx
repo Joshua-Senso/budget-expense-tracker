@@ -103,7 +103,10 @@ function ExpenseList() {
 
   const filteredTotal = useMemo(
     () =>
-      filteredExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0),
+      filteredExpenses.reduce(
+        (cents, expense) => cents + Math.round(Number(expense.amount) * 100),
+        0
+      ) / 100,
     [filteredExpenses]
   )
 
