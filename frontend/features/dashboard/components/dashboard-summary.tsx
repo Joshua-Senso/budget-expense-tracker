@@ -130,7 +130,8 @@ function BudgetSummary({ summary }: { summary: DashboardSummaryData }) {
               )}
               role={tone !== "neutral" ? "alert" : undefined}
             >
-              {percentUsed}% of salary used
+              {percentUsed !== null ? percentUsed.toFixed(1) : 0}% of salary
+              used
               {tone === "over" && " — over budget"}
               {tone === "high" && " — approaching your limit"}
             </p>

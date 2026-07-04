@@ -23,7 +23,7 @@ function useUpsertMonthlySetting(month: SelectedMonth) {
       queryClient.invalidateQueries({
         queryKey: queryKeys.budgetSettings(monthKey),
       })
-      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard() })
+      queryClient.invalidateQueries({ queryKey: queryKeys.dashboard(monthKey) })
     },
   })
 }
