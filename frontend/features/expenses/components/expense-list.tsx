@@ -5,6 +5,7 @@ import { PencilIcon, Trash2Icon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { CategoryColor, useCategories } from "@/features/categories"
+import type { Category } from "@/features/categories"
 import { ApiError } from "@/lib/api-client"
 import {
   formatCurrency,
@@ -15,8 +16,11 @@ import { useMonthStore } from "@/stores/month-store"
 
 import { useDeleteExpense } from "../api/mutations"
 import { useExpenses } from "../api/queries"
+import { useExpenseFilterStore } from "../store"
+import { ExpenseFilterBar } from "./expense-filter-bar"
 import { ExpenseFormDialog } from "./expense-form-dialog"
 import type { Expense } from "../schemas"
+import type { ExpenseFilter } from "../store"
 
 function getDeleteErrorMessage(err: unknown) {
   if (err instanceof ApiError && err.status === 404) {
@@ -26,6 +30,38 @@ function getDeleteErrorMessage(err: unknown) {
   return "Could not delete expense. Please try again."
 }
 
+function matchesFilter(
+  filter: ExpenseFilter,
+  expense: Expense,
+  category: Category | undefined
+) {
+  switch (filter.type) {
+    case "all":
+      return true
+    case "card":
+    case "other":
+      return category?.expense_group === filter.type
+    case "category":
+      return expense.category_id === filter.categoryId
+  }
+}
+
+function getFilterLabel(
+  filter: ExpenseFilter,
+  categoryById: Map<string, Category>
+) {
+  switch (filter.type) {
+    case "all":
+      return null
+    case "card":
+      return "card"
+    case "other":
+      return "other"
+    case "category":
+      return categoryById.get(filter.categoryId)?.name ?? "this category"
+  }
+}
+
 function ExpenseList() {
   const selectedMonth = useMonthStore(({ year, month }) => ({ year, month }))
   const {
@@ -33,9 +69,9 @@ function ExpenseList() {
     isLoading: expensesLoading,
     isError: expensesError,
   } = useExpenses(selectedMonth)
-  const monthExpenses = expenses ?? []
   const { data: categories, isError: categoriesError } = useCategories()
   const deleteExpense = useDeleteExpense()
+  const filter = useExpenseFilterStore((state) => state.filter)
 
   const [editTarget, setEditTarget] = useState<Expense | undefined>(undefined)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -49,6 +85,24 @@ function ExpenseList() {
       new Map((categories ?? []).map((category) => [category.id, category])),
     [categories]
   )
+
+  const monthExpenses = useMemo(() => expenses ?? [], [expenses])
+
+  const filteredExpenses = useMemo(
+    () =>
+      monthExpenses.filter((expense) =>
+        matchesFilter(filter, expense, categoryById.get(expense.category_id))
+      ),
+    [monthExpenses, filter, categoryById]
+  )
+
+  const filteredTotal = useMemo(
+    () =>
+      filteredExpenses.reduce((sum, expense) => sum + Number(expense.amount), 0),
+    [filteredExpenses]
+  )
+
+  const filterLabel = getFilterLabel(filter, categoryById)
 
   function openEdit(expense: Expense) {
     setEditTarget(expense)
@@ -87,7 +141,16 @@ function ExpenseList() {
 
   return (
     <section className="flex flex-col gap-4">
-      <h2 className="text-lg font-semibold tracking-tight">Expenses</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold tracking-tight">Expenses</h2>
+        {!expensesLoading && !expensesError && (
+          <span className="text-sm font-semibold">
+            {formatCurrency(filteredTotal, "PHP")}
+          </span>
+        )}
+      </div>
+
+      <ExpenseFilterBar />
 
       {expensesLoading && (
         <p className="text-sm text-muted-foreground">Loading…</p>
@@ -113,9 +176,19 @@ function ExpenseList() {
         </p>
       )}
 
-      {!expensesLoading && !expensesError && monthExpenses.length > 0 && (
+      {!expensesLoading &&
+        !expensesError &&
+        monthExpenses.length > 0 &&
+        filteredExpenses.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No {filterLabel} expenses for{" "}
+            {formatMonthLabel(selectedMonth.year, selectedMonth.month)}.
+          </p>
+        )}
+
+      {!expensesLoading && !expensesError && filteredExpenses.length > 0 && (
         <ul className="flex flex-col gap-2">
-          {monthExpenses.map((expense) => {
+          {filteredExpenses.map((expense) => {
             const category = categoryById.get(expense.category_id)
 
             return (
