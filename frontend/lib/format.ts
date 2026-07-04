@@ -1,7 +1,11 @@
 function formatCurrency(amount: string | number, currency: string) {
   const value = typeof amount === "string" ? Number(amount) : amount
 
-  return new Intl.NumberFormat("en-PH", { style: "currency", currency }).format(value)
+  try {
+    return new Intl.NumberFormat("en-PH", { style: "currency", currency }).format(value)
+  } catch {
+    return `${currency} ${value.toFixed(2)}`
+  }
 }
 
 function formatMonthLabel(year: number, month: number) {
