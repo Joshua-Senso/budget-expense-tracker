@@ -11,6 +11,7 @@ import { useYearlyOverview } from "../api/queries"
 import type { MonthlyOverview } from "../schemas"
 
 const WINDOW_SIZE = 3
+const QUARTER_LABELS = ["1st Quarter", "2nd Quarter", "3rd Quarter", "4th Quarter"]
 
 function chunkMonths(months: MonthlyOverview[]): MonthlyOverview[][] {
   const windows: MonthlyOverview[][] = []
@@ -84,7 +85,7 @@ function YearlyOverview() {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-medium text-muted-foreground uppercase">
-          Q{windowIndex + 1}
+          {QUARTER_LABELS[windowIndex]}
         </h2>
         <div className="flex items-center gap-1">
           <Button
