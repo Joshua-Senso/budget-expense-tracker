@@ -19,6 +19,12 @@ function AppShell({ children }: { children: ReactNode }) {
               Dashboard
             </Link>
             <Link
+              href="/yearly"
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Yearly
+            </Link>
+            <Link
               href="/categories"
               className="text-sm text-muted-foreground transition-colors hover:text-foreground"
             >
