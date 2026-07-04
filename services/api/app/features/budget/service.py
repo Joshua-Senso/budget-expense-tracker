@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -47,6 +47,7 @@ def upsert_monthly_setting(
         set_={
             "monthly_net_salary": monthly_net_salary,
             "base_currency": base_currency,
+            "updated_at": func.now(),
         },
     )
     db.execute(stmt)

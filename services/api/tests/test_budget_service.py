@@ -64,3 +64,16 @@ def test_upsert_monthly_setting_commits_and_returns_current() -> None:
     assert result is setting
     db.commit.assert_called_once()
     assert db.execute.call_count == 2
+
+
+def test_upsert_monthly_setting_bumps_updated_at_on_conflict() -> None:
+    # The ON CONFLICT DO UPDATE path bypasses the ORM, so the column-level
+    # onupdate=func.now() never fires there — it must be set explicitly.
+    db = _mock_db()
+    db.execute.return_value.scalar_one_or_none.return_value = _make_setting()
+
+    upsert_monthly_setting(db, "user-1", "2026-07", Decimal("60000.00"), "PHP")
+
+    upsert_stmt = db.execute.call_args_list[0].args[0]
+    set_keys = dict(upsert_stmt._post_values_clause.update_values_to_set)
+    assert "updated_at" in set_keys
