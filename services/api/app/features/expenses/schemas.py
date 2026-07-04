@@ -56,31 +56,8 @@ class ExpenseCreate(BaseModel):
         return _validate_currency(v)
 
 
-class ExpenseInstallmentCreate(BaseModel):
-    category_id: str
-    description: str
-    amount: Decimal
-    currency: str = "PHP"
-    spent_on: date
+class ExpenseInstallmentCreate(ExpenseCreate):
     installment_total: int
-
-    @field_validator("description")
-    @classmethod
-    def description_nonempty(cls, v: str) -> str:
-        stripped = v.strip()
-        if not stripped:
-            raise ValueError("description must not be blank")
-        return stripped
-
-    @field_validator("amount")
-    @classmethod
-    def amount_valid(cls, v: Decimal) -> Decimal:
-        return _validate_amount(v)
-
-    @field_validator("currency")
-    @classmethod
-    def currency_valid(cls, v: str) -> str:
-        return _validate_currency(v)
 
     @field_validator("installment_total")
     @classmethod

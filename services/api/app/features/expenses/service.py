@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.features.categories.models import UserCategory
@@ -114,7 +114,15 @@ def create_installment_expenses(
     ]
     db.add_all(expenses)
     db.commit()
-    return expenses
+    return list(
+        db.execute(
+            _own_expense_query(user_id)
+            .where(Expense.installment_group_id == group_id)
+            .order_by(Expense.installment_index)
+        )
+        .scalars()
+        .all()
+    )
 
 
 def update_expense(
@@ -163,17 +171,13 @@ def delete_expense(
         raise ExpenseNotFoundError(expense_id)
 
     if scope == "group" and expense.installment_group_id is not None:
-        group_expenses = (
-            db.execute(
-                _own_expense_query(user_id).where(
-                    Expense.installment_group_id == expense.installment_group_id
-                )
+        db.execute(
+            delete(Expense).where(
+                Expense.user_id == user_id,
+                Expense.household_id.is_(None),
+                Expense.installment_group_id == expense.installment_group_id,
             )
-            .scalars()
-            .all()
         )
-        for row in group_expenses:
-            db.delete(row)
     else:
         db.delete(expense)
 
