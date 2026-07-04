@@ -12,7 +12,7 @@ from app.features.dashboard.schemas import (
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 _MONTH_KEY_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
-_YEAR_PATTERN = r"^\d{4}$"
+_YEAR_PATTERN = r"^[1-9]\d{3}$"
 
 
 @router.get("/summary/{month_key}", response_model=DashboardSummaryResponse)
