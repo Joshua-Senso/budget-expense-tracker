@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useState } from "react"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm, useWatch } from "react-hook-form"
 import type { DefaultValues } from "react-hook-form"
@@ -76,8 +76,8 @@ function getDefaultGroup(expense?: Expense, categories?: Category[]) {
 }
 
 function getDefaultValues(
-  expense?: Expense,
-  categories?: Category[],
+  expense: Expense | undefined,
+  categories: Category[],
 ): DefaultValues<ExpenseFormValues> {
   return {
     description: expense?.description ?? "",
@@ -89,18 +89,20 @@ function getDefaultValues(
   }
 }
 
-interface ExpenseFormContentProps {
+interface ExpenseFormFieldsProps {
   expense?: Expense
+  categories: Category[]
+  categoriesError: boolean
   onSuccess: () => void
 }
 
-function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
+function ExpenseFormFields({
+  expense,
+  categories,
+  categoriesError,
+  onSuccess,
+}: ExpenseFormFieldsProps) {
   const isEdit = !!expense
-  const {
-    data: categories,
-    isLoading: categoriesLoading,
-    isError: categoriesError,
-  } = useCategories()
   const create = useCreateExpense()
   const update = useUpdateExpense()
   const isPending = create.isPending || update.isPending
@@ -108,24 +110,16 @@ function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
 
   const form = useForm<ExpenseFormValues>({
     resolver: zodResolver(expenseSchema),
-    defaultValues: getDefaultValues(expense),
+    defaultValues: getDefaultValues(expense, categories),
   })
-  const { reset } = form
-  const hasAppliedCategoryDefaults = useRef(false)
-
-  useEffect(() => {
-    if (expense && categories && !hasAppliedCategoryDefaults.current) {
-      hasAppliedCategoryDefaults.current = true
-      reset(getDefaultValues(expense, categories))
-    }
-  }, [categories, expense, reset])
 
   const selectedGroup = useWatch({
     control: form.control,
     name: "expense_group",
   })
-  const categoryOptions =
-    categories?.filter((category) => category.expense_group === selectedGroup) ?? []
+  const categoryOptions = categories.filter(
+    (category) => category.expense_group === selectedGroup,
+  )
 
   async function onSubmit(values: ExpenseFormValues) {
     if (isPending) {
@@ -266,18 +260,12 @@ function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
               <FormLabel>Category</FormLabel>
               <Select
                 value={field.value}
-                disabled={
-                  categoriesLoading || categoriesError || categoryOptions.length === 0
-                }
+                disabled={categoriesError || categoryOptions.length === 0}
                 onValueChange={field.onChange}
               >
                 <FormControl>
                   <SelectTrigger className="w-full">
-                    <SelectValue
-                      placeholder={
-                        categoriesLoading ? "Loading categories..." : "Select category"
-                      }
-                    />
+                    <SelectValue placeholder="Select category" />
                   </SelectTrigger>
                 </FormControl>
                 <SelectContent>
@@ -294,7 +282,7 @@ function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
                   Failed to load categories. Refresh the page and try again.
                 </p>
               )}
-              {!categoriesError && categoryOptions.length === 0 && !categoriesLoading && (
+              {!categoriesError && categoryOptions.length === 0 && (
                 <p className="text-xs text-muted-foreground">
                   Add a {selectedGroup} category before saving this expense.
                 </p>
@@ -323,6 +311,28 @@ function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
         </Button>
       </DialogFooter>
     </Form>
+  )
+}
+
+interface ExpenseFormContentProps {
+  expense?: Expense
+  onSuccess: () => void
+}
+
+function ExpenseFormContent({ expense, onSuccess }: ExpenseFormContentProps) {
+  const { data: categories, isLoading, isError: categoriesError } = useCategories()
+
+  if (isLoading) {
+    return <p className="text-sm text-muted-foreground">Loading…</p>
+  }
+
+  return (
+    <ExpenseFormFields
+      expense={expense}
+      categories={categories ?? []}
+      categoriesError={categoriesError}
+      onSuccess={onSuccess}
+    />
   )
 }
 
