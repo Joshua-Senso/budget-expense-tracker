@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     auth_jwks_url: str
     auth_jwt_issuer: str
     auth_jwt_audience: str
+    frontend_origin: str
 
     @computed_field
     @property

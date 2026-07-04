@@ -143,8 +143,12 @@ function BudgetSummary({ summary }: { summary: DashboardSummaryData }) {
 }
 
 function DashboardSummary() {
-  const month = useMonthStore(({ year, month }) => ({ year, month }))
-  const { data: summary, isLoading, isError } = useDashboardSummary(month)
+  const year = useMonthStore((state) => state.year)
+  const month = useMonthStore((state) => state.month)
+  const { data: summary, isLoading, isError } = useDashboardSummary({
+    year,
+    month,
+  })
 
   if (isLoading) {
     return <p className="text-sm text-muted-foreground">Loading dashboard…</p>

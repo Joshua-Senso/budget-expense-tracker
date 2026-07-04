@@ -18,6 +18,15 @@ function formatMonthLabel(year: number, month: number) {
   }).format(date)
 }
 
+function formatMonthName(month: number) {
+  const date = new Date(Date.UTC(2000, month - 1, 1))
+
+  return new Intl.DateTimeFormat("en-PH", {
+    month: "long",
+    timeZone: "UTC",
+  }).format(date)
+}
+
 function formatExpenseDate(spentOn: string) {
   const date = new Date(`${spentOn}T00:00:00Z`)
 
@@ -28,4 +37,4 @@ function formatExpenseDate(spentOn: string) {
   }).format(date)
 }
 
-export { formatCurrency, formatMonthLabel, formatExpenseDate }
+export { formatCurrency, formatMonthLabel, formatMonthName, formatExpenseDate }

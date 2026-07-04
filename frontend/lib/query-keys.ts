@@ -12,6 +12,10 @@ const queryKeys = {
     monthKey
       ? ([...queryKeys.all, "dashboard", monthKey] as const)
       : ([...queryKeys.all, "dashboard"] as const),
+  dashboardYearly: (year?: number) =>
+    year
+      ? ([...queryKeys.all, "dashboard-yearly", year] as const)
+      : ([...queryKeys.all, "dashboard-yearly"] as const),
   budgetSettings: (monthKey?: string) =>
     monthKey
       ? ([...queryKeys.all, "budget-settings", monthKey] as const)

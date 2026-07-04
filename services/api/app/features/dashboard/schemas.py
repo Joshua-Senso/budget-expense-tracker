@@ -23,3 +23,17 @@ class DashboardSummaryResponse(BaseModel):
     monthly_net_salary: Decimal | None
     remaining: Decimal | None
     percent_used: Decimal | None
+
+
+class MonthlyOverview(BaseModel):
+    month_key: str
+    month: int
+    card_total: Decimal
+    other_total: Decimal
+    month_total: Decimal
+
+
+class YearlyOverviewResponse(BaseModel):
+    year: int
+    months: list[MonthlyOverview]
+    year_total: Decimal
