@@ -9,6 +9,7 @@ from app.features.expenses.service import (
     CategoryOwnershipError,
     ExpenseNotFoundError,
     create_expense,
+    create_installment_expenses,
     delete_expense,
     list_expenses,
     update_expense,
@@ -114,6 +115,75 @@ def test_create_expense_category_not_owned_raises() -> None:
     db.add.assert_not_called()
 
 
+# --- create_installment_expenses ---
+
+
+def _stub_installment_requery(db: MagicMock) -> None:
+    """Make the post-commit re-query return whatever was passed to add_all."""
+
+    def fake_execute(*args, **kwargs):
+        del args, kwargs
+        created = db.add_all.call_args[0][0]
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = created
+        return result
+
+    db.execute.side_effect = fake_execute
+
+
+def test_create_installment_expenses_generates_one_row_per_term() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+    _stub_installment_requery(db)
+
+    result = create_installment_expenses(
+        db, "user-1", "cat-1", "TV", Decimal("1000"), "PHP", date(2026, 7, 1), 3
+    )
+
+    db.add_all.assert_called_once()
+    db.commit.assert_called_once()
+    assert len(result) == 3
+    assert [e.spent_on for e in result] == [
+        date(2026, 7, 1),
+        date(2026, 8, 1),
+        date(2026, 9, 1),
+    ]
+    assert [e.installment_index for e in result] == [1, 2, 3]
+    assert all(e.installment_total == 3 for e in result)
+    assert all(e.original_description == "TV" for e in result)
+    assert [e.description for e in result] == ["TV (1/3)", "TV (2/3)", "TV (3/3)"]
+    group_ids = {e.installment_group_id for e in result}
+    assert len(group_ids) == 1
+
+
+def test_create_installment_expenses_clamps_month_end_day() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+    _stub_installment_requery(db)
+
+    result = create_installment_expenses(
+        db, "user-1", "cat-1", "TV", Decimal("1000"), "PHP", date(2026, 1, 31), 3
+    )
+
+    assert [e.spent_on for e in result] == [
+        date(2026, 1, 31),
+        date(2026, 2, 28),
+        date(2026, 3, 31),
+    ]
+
+
+def test_create_installment_expenses_category_not_owned_raises() -> None:
+    db = _mock_db()
+    db.scalar.return_value = None
+
+    with pytest.raises(CategoryOwnershipError):
+        create_installment_expenses(
+            db, "user-1", "cat-other", "TV", Decimal("1000"), "PHP", date(2026, 7, 1), 3
+        )
+
+    db.add_all.assert_not_called()
+
+
 # --- update_expense ---
 
 
@@ -181,3 +251,39 @@ def test_delete_expense_not_found_raises() -> None:
         delete_expense(db, "user-1", "missing-id")
 
     db.delete.assert_not_called()
+
+
+def test_delete_expense_group_scope_on_non_grouped_row_deletes_single_row() -> None:
+    db = _mock_db()
+    exp = _make_expense(installment_group_id=None)
+    db.execute.return_value.scalar_one_or_none.return_value = exp
+
+    delete_expense(db, "user-1", "exp-1", scope="group")
+
+    db.delete.assert_called_once_with(exp)
+    db.commit.assert_called_once()
+
+
+def test_delete_expense_group_scope_bulk_deletes_group_rows() -> None:
+    db = _mock_db()
+    exp = _make_expense(installment_group_id="grp-1")
+    db.execute.return_value.scalar_one_or_none.return_value = exp
+
+    delete_expense(db, "user-1", "exp-1", scope="group")
+
+    db.delete.assert_not_called()
+    assert db.execute.call_count == 2
+    bulk_delete_stmt = db.execute.call_args_list[1][0][0]
+    assert "DELETE FROM expenses" in str(bulk_delete_stmt)
+    db.commit.assert_called_once()
+
+
+def test_delete_expense_row_scope_ignores_installment_group() -> None:
+    db = _mock_db()
+    exp = _make_expense(installment_group_id="grp-1")
+    db.execute.return_value.scalar_one_or_none.return_value = exp
+
+    delete_expense(db, "user-1", "exp-1", scope="row")
+
+    db.delete.assert_called_once_with(exp)
+    db.commit.assert_called_once()

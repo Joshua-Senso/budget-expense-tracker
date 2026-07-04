@@ -4,7 +4,11 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from app.features.expenses.schemas import ExpenseCreate, ExpenseUpdate
+from app.features.expenses.schemas import (
+    ExpenseCreate,
+    ExpenseInstallmentCreate,
+    ExpenseUpdate,
+)
 
 
 # --- ExpenseCreate ---
@@ -133,6 +137,53 @@ def test_create_amount_extreme_magnitude_fails() -> None:
             description="Lunch",
             amount=Decimal("1e30"),
             spent_on=date(2026, 7, 1),
+        )
+
+
+# --- ExpenseInstallmentCreate ---
+
+
+def test_installment_create_valid() -> None:
+    e = ExpenseInstallmentCreate(
+        category_id="cat-1",
+        description="TV",
+        amount=Decimal("1000"),
+        spent_on=date(2026, 7, 1),
+        installment_total=12,
+    )
+    assert e.installment_total == 12
+
+
+def test_installment_create_total_of_one_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseInstallmentCreate(
+            category_id="cat-1",
+            description="TV",
+            amount=Decimal("1000"),
+            spent_on=date(2026, 7, 1),
+            installment_total=1,
+        )
+
+
+def test_installment_create_total_too_high_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseInstallmentCreate(
+            category_id="cat-1",
+            description="TV",
+            amount=Decimal("1000"),
+            spent_on=date(2026, 7, 1),
+            installment_total=61,
+        )
+
+
+def test_installment_create_blank_description_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseInstallmentCreate(
+            category_id="cat-1",
+            description="   ",
+            amount=Decimal("1000"),
+            spent_on=date(2026, 7, 1),
+            installment_total=12,
         )
 
 

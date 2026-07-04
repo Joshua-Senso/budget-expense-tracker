@@ -47,5 +47,15 @@ class Expense(Base):
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_expenses_amount_positive"),
         CheckConstraint("description <> ''", name="ck_expenses_description_nonempty"),
+        CheckConstraint(
+            "(installment_group_id IS NULL AND installment_index IS NULL "
+            "AND installment_total IS NULL AND original_description IS NULL) "
+            "OR (installment_group_id IS NOT NULL AND installment_index IS NOT NULL "
+            "AND installment_total IS NOT NULL AND original_description IS NOT NULL "
+            "AND installment_total >= 2 AND installment_index >= 1 "
+            "AND installment_index <= installment_total)",
+            name="ck_expenses_installment_metadata",
+        ),
         Index("ix_expenses_user_spent_on", "user_id", "spent_on"),
+        Index("ix_expenses_installment_group_id", "installment_group_id"),
     )
