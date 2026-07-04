@@ -58,6 +58,30 @@ def test_list_expenses_empty() -> None:
     assert result == []
 
 
+def test_list_expenses_filters_by_month() -> None:
+    db = _mock_db()
+    july = [_make_expense()]
+    db.execute.return_value.scalars.return_value.all.return_value = july
+
+    result = list_expenses(db, "user-1", year=2026, month=7)
+
+    assert result == july
+    executed_query = db.execute.call_args[0][0]
+    assert "spent_on BETWEEN" in str(executed_query)
+
+
+def test_list_expenses_ignores_partial_month_filter() -> None:
+    db = _mock_db()
+    expenses = [_make_expense(), _make_expense(id="exp-2")]
+    db.execute.return_value.scalars.return_value.all.return_value = expenses
+
+    result = list_expenses(db, "user-1", year=2026, month=None)
+
+    assert result == expenses
+    executed_query = db.execute.call_args[0][0]
+    assert "spent_on BETWEEN" not in str(executed_query)
+
+
 # --- create_expense ---
 
 

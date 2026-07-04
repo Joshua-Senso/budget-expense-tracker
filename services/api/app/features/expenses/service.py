@@ -1,3 +1,4 @@
+from calendar import monthrange
 from datetime import date
 from decimal import Decimal
 
@@ -35,12 +36,20 @@ def _assert_category_owned(db: Session, user_id: str, category_id: str) -> None:
         raise CategoryOwnershipError(category_id)
 
 
-def list_expenses(db: Session, user_id: str) -> list[Expense]:
-    return list(
-        db.execute(_own_expense_query(user_id).order_by(Expense.spent_on.desc()))
-        .scalars()
-        .all()
-    )
+def list_expenses(
+    db: Session,
+    user_id: str,
+    year: int | None = None,
+    month: int | None = None,
+) -> list[Expense]:
+    query = _own_expense_query(user_id)
+
+    if year is not None and month is not None:
+        month_start = date(year, month, 1)
+        month_end = date(year, month, monthrange(year, month)[1])
+        query = query.where(Expense.spent_on.between(month_start, month_end))
+
+    return list(db.execute(query.order_by(Expense.spent_on.desc())).scalars().all())
 
 
 def create_expense(

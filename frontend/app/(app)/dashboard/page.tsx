@@ -1,4 +1,4 @@
-import { ExpenseQuickEntry } from "@/features/expenses"
+import { ExpenseList, ExpenseQuickEntry } from "@/features/expenses"
 
 function DashboardPage() {
   return (
@@ -17,6 +17,7 @@ function DashboardPage() {
       </div>
 
       <ExpenseQuickEntry />
+      <ExpenseList />
     </section>
   )
 }

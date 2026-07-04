@@ -33,4 +33,13 @@ function useUpdateExpense() {
   })
 }
 
-export { useCreateExpense, useUpdateExpense }
+function useDeleteExpense() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (id: string) => apiFetch<null>(`/expenses/${id}`, { method: "DELETE" }),
+    onSuccess: () => invalidateExpenseDependents(queryClient),
+  })
+}
+
+export { useCreateExpense, useUpdateExpense, useDeleteExpense }
