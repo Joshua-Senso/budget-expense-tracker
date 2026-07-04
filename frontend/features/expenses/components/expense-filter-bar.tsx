@@ -42,10 +42,7 @@ function ExpenseFilterBar() {
         value={filter.type === "category" ? filter.categoryId : ""}
         onValueChange={(categoryId) => setFilter({ type: "category", categoryId })}
       >
-        <SelectTrigger
-          className="w-44"
-          aria-pressed={filter.type === "category"}
-        >
+        <SelectTrigger className="w-44">
           <SelectValue placeholder="By category" />
         </SelectTrigger>
         <SelectContent>

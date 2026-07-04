@@ -69,7 +69,12 @@ function ExpenseList() {
     isLoading: expensesLoading,
     isError: expensesError,
   } = useExpenses(selectedMonth)
-  const { data: categories, isError: categoriesError } = useCategories()
+  const {
+    data: categories,
+    isLoading: categoriesLoading,
+    isError: categoriesError,
+  } = useCategories()
+  const isLoading = expensesLoading || categoriesLoading
   const deleteExpense = useDeleteExpense()
   const filter = useExpenseFilterStore((state) => state.filter)
 
@@ -143,7 +148,7 @@ function ExpenseList() {
     <section className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold tracking-tight">Expenses</h2>
-        {!expensesLoading && !expensesError && (
+        {!isLoading && !expensesError && (
           <span className="text-sm font-semibold">
             {formatCurrency(filteredTotal, "PHP")}
           </span>
@@ -152,9 +157,7 @@ function ExpenseList() {
 
       <ExpenseFilterBar />
 
-      {expensesLoading && (
-        <p className="text-sm text-muted-foreground">Loading…</p>
-      )}
+      {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
 
       {expensesError && (
         <p className="text-sm text-destructive" role="alert">
@@ -169,14 +172,14 @@ function ExpenseList() {
         </p>
       )}
 
-      {!expensesLoading && !expensesError && monthExpenses.length === 0 && (
+      {!isLoading && !expensesError && monthExpenses.length === 0 && (
         <p className="text-sm text-muted-foreground">
           No expenses recorded for{" "}
           {formatMonthLabel(selectedMonth.year, selectedMonth.month)}.
         </p>
       )}
 
-      {!expensesLoading &&
+      {!isLoading &&
         !expensesError &&
         monthExpenses.length > 0 &&
         filteredExpenses.length === 0 && (
@@ -186,7 +189,7 @@ function ExpenseList() {
           </p>
         )}
 
-      {!expensesLoading && !expensesError && filteredExpenses.length > 0 && (
+      {!isLoading && !expensesError && filteredExpenses.length > 0 && (
         <ul className="flex flex-col gap-2">
           {filteredExpenses.map((expense) => {
             const category = categoryById.get(expense.category_id)
