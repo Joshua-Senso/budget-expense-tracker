@@ -10,25 +10,20 @@ import { formatCurrency, formatExpenseDate, formatMonthLabel } from "@/lib/forma
 
 import { useDeleteExpense } from "../api/mutations"
 import { useExpenses } from "../api/queries"
+import type { ExpenseMonth } from "../api/queries"
 import { ExpenseFormDialog } from "./expense-form-dialog"
 import type { Expense } from "../schemas"
 
-type MonthValue = { year: number; month: number }
-
-function getCurrentMonth(): MonthValue {
+function getCurrentMonth(): ExpenseMonth {
   const now = new Date()
 
   return { year: now.getFullYear(), month: now.getMonth() + 1 }
 }
 
-function shiftMonth({ year, month }: MonthValue, delta: number): MonthValue {
+function shiftMonth({ year, month }: ExpenseMonth, delta: number): ExpenseMonth {
   const date = new Date(Date.UTC(year, month - 1 + delta, 1))
 
   return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 }
-}
-
-function toMonthKey({ year, month }: MonthValue): string {
-  return `${year}-${String(month).padStart(2, "0")}`
 }
 
 function getDeleteErrorMessage(err: unknown) {
@@ -40,12 +35,17 @@ function getDeleteErrorMessage(err: unknown) {
 }
 
 function ExpenseList() {
-  const [selectedMonth, setSelectedMonth] = useState<MonthValue>(getCurrentMonth)
-  const { data: expenses, isLoading: expensesLoading, isError: expensesError } = useExpenses()
+  const [selectedMonth, setSelectedMonth] = useState<ExpenseMonth>(getCurrentMonth)
+  const {
+    data: expenses,
+    isLoading: expensesLoading,
+    isError: expensesError,
+  } = useExpenses(selectedMonth)
+  const monthExpenses = expenses ?? []
   const { data: categories, isError: categoriesError } = useCategories()
   const deleteExpense = useDeleteExpense()
 
-  const [editTargetId, setEditTargetId] = useState<string | undefined>(undefined)
+  const [editTarget, setEditTarget] = useState<Expense | undefined>(undefined)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({})
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(new Set())
@@ -55,17 +55,16 @@ function ExpenseList() {
     [categories],
   )
 
-  const monthKey = toMonthKey(selectedMonth)
-  const monthExpenses = useMemo(
-    () => (expenses ?? []).filter((expense) => expense.spent_on.startsWith(monthKey)),
-    [expenses, monthKey],
-  )
-
-  const editTarget = monthExpenses.find((expense) => expense.id === editTargetId)
-
   function openEdit(expense: Expense) {
-    setEditTargetId(expense.id)
+    setEditTarget(expense)
     setDialogOpen(true)
+  }
+
+  function handleDialogOpenChange(open: boolean) {
+    setDialogOpen(open)
+    if (!open) {
+      setEditTarget(undefined)
+    }
   }
 
   async function handleDelete(expense: Expense) {
@@ -195,7 +194,11 @@ function ExpenseList() {
         </ul>
       )}
 
-      <ExpenseFormDialog open={dialogOpen} onOpenChange={setDialogOpen} expense={editTarget} />
+      <ExpenseFormDialog
+        open={dialogOpen}
+        onOpenChange={handleDialogOpenChange}
+        expense={editTarget}
+      />
     </section>
   )
 }

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -12,10 +12,12 @@ router = APIRouter(prefix="/expenses", tags=["expenses"])
 
 @router.get("", response_model=list[ExpenseResponse])
 def list_expenses(
+    year: int | None = None,
+    month: int | None = Query(default=None, ge=1, le=12),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[ExpenseResponse]:
-    return service.list_expenses(db, user_id)
+    return service.list_expenses(db, user_id, year=year, month=month)
 
 
 @router.post("", response_model=ExpenseResponse, status_code=status.HTTP_201_CREATED)
