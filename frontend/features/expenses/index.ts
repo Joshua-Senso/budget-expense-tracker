@@ -1,3 +1,5 @@
 export { ExpenseFormDialog } from "./components/expense-form-dialog"
 export { ExpenseQuickEntry } from "./components/expense-quick-entry"
+export { ExpenseList } from "./components/expense-list"
+export { useExpenses } from "./api/queries"
 export type { Expense, ExpenseFormValues } from "./schemas"
