@@ -12,7 +12,7 @@ router = APIRouter(prefix="/expenses", tags=["expenses"])
 
 @router.get("", response_model=list[ExpenseResponse])
 def list_expenses(
-    year: int | None = None,
+    year: int | None = Query(default=None, ge=1, le=9999),
     month: int | None = Query(default=None, ge=1, le=12),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
