@@ -1,6 +1,7 @@
 from fastapi import Depends, FastAPI
 
 from app.core.security import get_current_user_id
+from app.features.budget.router import router as budget_router
 from app.features.categories.router import router as categories_router
 from app.features.expenses.router import router as expenses_router
 
@@ -9,6 +10,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Expense Tracker API")
     app.include_router(categories_router)
     app.include_router(expenses_router)
+    app.include_router(budget_router)
 
     @app.get("/health")
     def health() -> dict[str, str]:
