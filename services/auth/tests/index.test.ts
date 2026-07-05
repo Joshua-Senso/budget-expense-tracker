@@ -71,11 +71,15 @@ describe("households (organization plugin)", () => {
     expect(fields.theme).toMatchObject({ type: "string", required: false, defaultValue: "dark" })
   })
 
-  test("only owner and member roles are recognized — no admin role yet", async () => {
+  test("no role is offered beyond owner/member, but admin is still mapped (not omitted)", async () => {
     const { auth } = await import("../src/auth")
     const orgPlugin = auth.options.plugins?.find((plugin) => plugin.id === "organization")
 
-    expect(Object.keys(orgPlugin?.options?.roles ?? {}).sort()).toEqual(["member", "owner"])
+    // "admin" must stay mapped: the library's invite/update-role validators
+    // accept it as a role name regardless of this config, so omitting it here
+    // would leave any member who ends up with that role with permissions that
+    // resolve to `undefined` instead of a predictable, safe default.
+    expect(Object.keys(orgPlugin?.options?.roles ?? {}).sort()).toEqual(["admin", "member", "owner"])
   })
 
   test("only the owner role can invite members and remove/manage membership", async () => {
@@ -87,6 +91,15 @@ describe("households (organization plugin)", () => {
     expect(await hasPermission({ role: "owner", options, permissions: { member: ["delete"] } })).toBe(true)
     expect(await hasPermission({ role: "member", options, permissions: { invitation: ["create"] } })).toBe(false)
     expect(await hasPermission({ role: "member", options, permissions: { member: ["delete"] } })).toBe(false)
+  })
+
+  test("a member row that somehow ends up with role \"admin\" resolves to member-level permissions, not undefined", async () => {
+    const { hasPermission } = await import("better-auth/plugins/organization")
+    const { auth } = await import("../src/auth")
+    const options = auth.options.plugins?.find((plugin) => plugin.id === "organization")?.options
+
+    expect(await hasPermission({ role: "admin", options, permissions: { invitation: ["create"] } })).toBe(false)
+    expect(await hasPermission({ role: "admin", options, permissions: { member: ["delete"] } })).toBe(false)
   })
 })
 
