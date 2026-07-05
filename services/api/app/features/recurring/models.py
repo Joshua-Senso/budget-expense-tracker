@@ -7,6 +7,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    ForeignKey,
     Index,
     Numeric,
     String,
@@ -25,7 +26,17 @@ class RecurringExpense(Base):
         String, primary_key=True, default=lambda: str(uuid.uuid4())
     )
     user_id: Mapped[str] = mapped_column(String, nullable=False)
-    category_id: Mapped[str] = mapped_column(String, nullable=False)
+    # ON DELETE RESTRICT: see the matching comment on Expense.category_id --
+    # the DB, not an app-level check, is what makes a category delete safe
+    # against a concurrent insert referencing it.
+    category_id: Mapped[str] = mapped_column(
+        ForeignKey(
+            "user_categories.id",
+            name="fk_recurring_expenses_category_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     description: Mapped[str] = mapped_column(String, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="PHP")

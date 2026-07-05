@@ -200,12 +200,15 @@ def update_category(
 
 
 def _category_in_use(db: Session, category_id: str) -> bool:
-    """True if any expense or recurring rule still references this category.
+    """True if any expense or recurring rule references this category.
 
-    Expenses/recurring rows store category_id as a plain string (no FK), and
-    dashboard totals inner-join on it -- deleting a referenced category would
-    silently drop those rows from summaries rather than raising, so deletion
-    is blocked instead of allowed to orphan the reference.
+    This up-front check exists only to give an ordinary delete a clean 409
+    instead of a raw IntegrityError. It can't be atomic against a concurrent
+    insert racing this delete, so it is not the actual safety net -- that's
+    the `fk_expenses_category_id` / `fk_recurring_expenses_category_id`
+    `ON DELETE RESTRICT` constraints (migration 009), which the DB enforces
+    transactionally regardless of timing. `_commit_or_raise_in_use` below
+    converts a constraint violation from that race into the same error.
     """
     return (
         db.scalar(select(Expense.id).where(Expense.category_id == category_id))
@@ -217,6 +220,16 @@ def _category_in_use(db: Session, category_id: str) -> bool:
         )
         is not None
     )
+
+
+def _commit_or_raise_in_use(db: Session, category_id: str) -> None:
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if getattr(exc.orig, "sqlstate", None) == "23503":  # foreign_key_violation
+            raise CategoryInUseError(category_id) from exc
+        raise
 
 
 def delete_category(db: Session, user_id: str, category_id: str) -> None:
@@ -238,4 +251,4 @@ def delete_category(db: Session, user_id: str, category_id: str) -> None:
         raise LastCategoryError()
 
     db.delete(category)
-    db.commit()
+    _commit_or_raise_in_use(db, category_id)

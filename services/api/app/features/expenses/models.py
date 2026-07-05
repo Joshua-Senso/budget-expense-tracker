@@ -6,6 +6,7 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    ForeignKey,
     Index,
     Numeric,
     String,
@@ -24,7 +25,18 @@ class Expense(Base):
         String, primary_key=True, default=lambda: str(uuid.uuid4())
     )
     user_id: Mapped[str] = mapped_column(String, nullable=False)
-    category_id: Mapped[str] = mapped_column(String, nullable=False)
+    # ON DELETE RESTRICT: the DB is the source of truth against a concurrent
+    # insert racing a category delete -- an app-level "is this category in
+    # use" check alone can't be atomic against that race (see delete_category
+    # in categories/service.py, which also checks up front for a clean 409).
+    category_id: Mapped[str] = mapped_column(
+        ForeignKey(
+            "user_categories.id",
+            name="fk_expenses_category_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     description: Mapped[str] = mapped_column(String, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="PHP")

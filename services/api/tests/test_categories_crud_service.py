@@ -248,6 +248,27 @@ def test_delete_category_in_use_by_recurring_raises() -> None:
     db.commit.assert_not_called()
 
 
+def test_delete_category_fk_violation_on_commit_raises_in_use_error() -> None:
+    """Regression: the up-front _category_in_use check can't be atomic
+    against a concurrent insert racing this delete -- the DB-level FK
+    (ON DELETE RESTRICT, migration 009) is the actual safety net. A
+    constraint violation surfacing at commit time (the race was lost) must
+    still convert to the same CategoryInUseError, not leak a raw
+    IntegrityError."""
+    db = _mock_db()
+    cat1 = _make_category(id="cat-1", name="Food")
+    cat2 = _make_category(id="cat-2", name="Transport")
+    db.get.return_value = cat1
+    db.scalar.return_value = None  # up-front check sees nothing -- lost the race
+    db.execute.return_value.scalars.return_value.all.return_value = [cat1, cat2]
+    db.commit.side_effect = _integrity_error("23503")  # foreign_key_violation
+
+    with pytest.raises(CategoryInUseError):
+        delete_category(db, "user-1", "cat-1")
+
+    db.rollback.assert_called_once()
+
+
 # --- household scoping ---
 
 
