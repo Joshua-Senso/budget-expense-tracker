@@ -70,6 +70,24 @@ describe("households (organization plugin)", () => {
     expect(fields.baseCurrency).toMatchObject({ type: "string", required: false, defaultValue: "PHP" })
     expect(fields.theme).toMatchObject({ type: "string", required: false, defaultValue: "dark" })
   })
+
+  test("only owner and member roles are recognized — no admin role yet", async () => {
+    const { auth } = await import("../src/auth")
+    const orgPlugin = auth.options.plugins?.find((plugin) => plugin.id === "organization")
+
+    expect(Object.keys(orgPlugin?.options?.roles ?? {}).sort()).toEqual(["member", "owner"])
+  })
+
+  test("only the owner role can invite members and remove/manage membership", async () => {
+    const { hasPermission } = await import("better-auth/plugins/organization")
+    const { auth } = await import("../src/auth")
+    const options = auth.options.plugins?.find((plugin) => plugin.id === "organization")?.options
+
+    expect(await hasPermission({ role: "owner", options, permissions: { invitation: ["create"] } })).toBe(true)
+    expect(await hasPermission({ role: "owner", options, permissions: { member: ["delete"] } })).toBe(true)
+    expect(await hasPermission({ role: "member", options, permissions: { invitation: ["create"] } })).toBe(false)
+    expect(await hasPermission({ role: "member", options, permissions: { member: ["delete"] } })).toBe(false)
+  })
 })
 
 describe("account linking", () => {

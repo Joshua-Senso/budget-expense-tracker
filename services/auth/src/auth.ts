@@ -1,6 +1,7 @@
 import { kyselyAdapter } from "@better-auth/kysely-adapter"
 import { betterAuth } from "better-auth"
 import { jwt, organization } from "better-auth/plugins"
+import { memberAc, ownerAc } from "better-auth/plugins/organization/access"
 import { Kysely, PostgresDialect } from "kysely"
 import { Pool } from "pg"
 
@@ -54,6 +55,13 @@ export const auth = betterAuth({
       // Explicit even though it's the library default: a household's creator
       // must become its owner (PRD §9.5, §7.9).
       creatorRole: "owner",
+      // Only owner/member for now (PRD §9.5 "additional roles such as admin
+      // may be enabled later"); replaces the library default roles, which
+      // otherwise also expose a near-owner-level "admin" role we don't want yet.
+      roles: {
+        owner: ownerAc,
+        member: memberAc,
+      },
       schema: {
         organization: {
           modelName: "organizations",
