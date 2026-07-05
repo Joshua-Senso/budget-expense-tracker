@@ -160,8 +160,21 @@ def test_build_export_workbook_writes_header_and_rows() -> None:
     assert data_row[1] == "recorded"
     assert data_row[2] == "Food"
     assert data_row[3] == "Lunch"
-    assert data_row[4] == 150.0
+    assert data_row[4] == "150.00"
     assert data_row[5] == "PHP"
+
+
+def test_build_export_workbook_preserves_exact_decimal_amount() -> None:
+    """Amounts are written as text, not float, so re-import can't misread e.g. 9.99."""
+    db = _mock_db()
+    expense = _make_expense(amount=Decimal("9.99"))
+    _queue_db(db, [("cat-1", "Food")], [expense])
+
+    buffer = build_export_workbook(db, "user-1", 2026, today=date(2026, 12, 31))
+
+    workbook = load_workbook(buffer)
+    sheet = workbook["Expenses"]
+    assert sheet[2][4].value == "9.99"
 
 
 # --- export_filename ---

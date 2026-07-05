@@ -142,7 +142,7 @@ def build_export_workbook(
                 row["row_type"],
                 row["category"],
                 row["description"],
-                float(row["amount"]),
+                str(row["amount"]),
                 row["currency"],
                 row["date"],
                 row["category_id"],
