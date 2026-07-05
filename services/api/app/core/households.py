@@ -1,4 +1,5 @@
 from sqlalchemy import String, select
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.db import Base
@@ -26,11 +27,17 @@ class Member(Base):
 
     __tablename__ = "members"
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)
+    # Better Auth's `advanced.database.generateId: "uuid"` (auth.ts) makes
+    # these real Postgres `uuid` columns, not text -- comparing them to a
+    # plain String-bound parameter fails at the SQL level ("operator does
+    # not exist: uuid = character varying"). `as_uuid=False` keeps the
+    # Python-side value a plain str, matching how the rest of the app
+    # (Expense.user_id, UserCategory.household_id, ...) stores these ids.
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True)
     organization_id: Mapped[str] = mapped_column(
-        "organizationId", String, nullable=False
+        "organizationId", UUID(as_uuid=False), nullable=False
     )
-    user_id: Mapped[str] = mapped_column("userId", String, nullable=False)
+    user_id: Mapped[str] = mapped_column("userId", UUID(as_uuid=False), nullable=False)
     role: Mapped[str] = mapped_column(String, nullable=False)
 
 
