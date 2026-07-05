@@ -5,12 +5,10 @@ from sqlalchemy.exc import DataError
 
 from app.core.households import (
     HouseholdAccessError,
-    HouseholdRoleError,
     assert_household_member,
-    assert_household_owner,
+    assert_household_scope,
     get_household_role,
     is_household_member,
-    is_household_owner,
 )
 
 
@@ -61,35 +59,18 @@ def test_get_household_role_returns_none_when_not_member() -> None:
     assert get_household_role(db, "user-1", "household-1") is None
 
 
-def test_is_household_owner_true_for_owner_role() -> None:
-    db = _mock_db("owner")
+def test_assert_household_scope_is_noop_for_personal_scope() -> None:
+    db = MagicMock()
 
-    assert is_household_owner(db, "user-1", "household-1") is True
-
-
-def test_is_household_owner_false_for_member_role() -> None:
-    db = _mock_db("member")
-
-    assert is_household_owner(db, "user-1", "household-1") is False
+    assert_household_scope(db, "user-1", None)  # does not raise
+    db.scalar.assert_not_called()
 
 
-def test_is_household_owner_false_when_not_a_member() -> None:
+def test_assert_household_scope_checks_membership_for_household_scope() -> None:
     db = _mock_db(None)
 
-    assert is_household_owner(db, "user-1", "household-1") is False
-
-
-def test_assert_household_owner_passes_silently_for_owner() -> None:
-    db = _mock_db("owner")
-
-    assert_household_owner(db, "user-1", "household-1")  # does not raise
-
-
-def test_assert_household_owner_raises_for_non_owner_member() -> None:
-    db = _mock_db("member")
-
-    with pytest.raises(HouseholdRoleError):
-        assert_household_owner(db, "user-1", "household-1")
+    with pytest.raises(HouseholdAccessError):
+        assert_household_scope(db, "user-1", "household-1")
 
 
 # --- malformed household_id / user_id ---

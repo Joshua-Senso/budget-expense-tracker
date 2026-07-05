@@ -3,7 +3,7 @@
 Every other test in this suite mocks `Session`, which can't catch a bug in
 the actual SQL sent to Postgres. This module exists specifically to close
 that gap: it runs `is_household_member`/`get_household_role`/
-`assert_household_owner` against a real database, using Better Auth's actual
+`assert_household_member` against a real database, using Better Auth's actual
 column types (Postgres `uuid`, not text) for `members.id`,
 `members.organizationId`, and `members.userId`.
 
@@ -20,9 +20,7 @@ from sqlalchemy import inspect, text
 from app.core.db import SessionLocal, engine
 from app.core.households import (
     HouseholdAccessError,
-    HouseholdRoleError,
     assert_household_member,
-    assert_household_owner,
     get_household_role,
     is_household_member,
 )
@@ -127,12 +125,9 @@ def test_household_membership_lookup_against_real_postgres_uuid_columns() -> Non
         assert is_household_member(db, owner_id, household_id) is True
         assert get_household_role(db, owner_id, household_id) == "owner"
         assert_household_member(db, owner_id, household_id)  # does not raise
-        assert_household_owner(db, owner_id, household_id)  # does not raise
 
         assert is_household_member(db, other_user_id, household_id) is False
         assert get_household_role(db, other_user_id, household_id) is None
-        with pytest.raises(HouseholdRoleError):
-            assert_household_owner(db, other_user_id, household_id)
     finally:
         db.rollback()
         db.execute(

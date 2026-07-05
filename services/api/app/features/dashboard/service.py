@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.households import assert_household_member, household_scope_clauses
+from app.core.households import assert_household_scope, household_scope_clauses
 from app.features.budget.service import MonthlySettingNotFoundError, get_monthly_setting
 from app.features.categories.models import UserCategory
 from app.features.expenses.models import Expense
@@ -90,8 +90,7 @@ def _monthly_group_totals(
 def get_yearly_overview(
     db: Session, user_id: str, year: int, household_id: str | None = None
 ) -> dict:
-    if household_id is not None:
-        assert_household_member(db, user_id, household_id)
+    assert_household_scope(db, user_id, household_id)
     year_start, year_end = _year_bounds(year)
     rows = _monthly_group_totals(db, user_id, household_id, year_start, year_end)
 
@@ -126,8 +125,7 @@ def get_yearly_overview(
 def get_dashboard_summary(
     db: Session, user_id: str, month_key: str, household_id: str | None = None
 ) -> dict:
-    if household_id is not None:
-        assert_household_member(db, user_id, household_id)
+    assert_household_scope(db, user_id, household_id)
     month_start, month_end = _month_bounds(month_key)
     rows = _category_totals(db, user_id, household_id, month_start, month_end)
 

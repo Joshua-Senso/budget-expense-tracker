@@ -8,11 +8,11 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.households import (
-    assert_household_member,
+    assert_household_scope,
+    category_accessible,
     household_scope_clauses,
     locate_household_scoped_row,
 )
-from app.features.categories.models import UserCategory
 from app.features.expenses.models import Expense
 
 
@@ -41,23 +41,7 @@ def _locate_expense_for_mutation(db: Session, user_id: str, expense_id: str) -> 
 def _assert_category_accessible(
     db: Session, user_id: str, category_id: str, household_id: str | None
 ) -> None:
-    # A household-scoped row may only reference a category shared in that same
-    # household -- not the creator's personal category, which other household
-    # members have no way to resolve when they list the shared row.
-    if household_id is not None:
-        condition = UserCategory.household_id == household_id
-    else:
-        condition = UserCategory.household_id.is_(None) & (
-            UserCategory.user_id == user_id
-        )
-
-    accessible = db.scalar(
-        select(UserCategory.id).where(
-            UserCategory.id == category_id,
-            condition,
-        )
-    )
-    if accessible is None:
+    if not category_accessible(db, user_id, category_id, household_id):
         raise CategoryOwnershipError(category_id)
 
 
@@ -68,8 +52,7 @@ def list_expenses(
     month: int | None = None,
     household_id: str | None = None,
 ) -> list[Expense]:
-    if household_id is not None:
-        assert_household_member(db, user_id, household_id)
+    assert_household_scope(db, user_id, household_id)
     query = _scoped_expense_query(user_id, household_id)
 
     if year is not None and month is not None:
@@ -90,8 +73,7 @@ def create_expense(
     spent_on: date,
     household_id: str | None = None,
 ) -> Expense:
-    if household_id is not None:
-        assert_household_member(db, user_id, household_id)
+    assert_household_scope(db, user_id, household_id)
     _assert_category_accessible(db, user_id, category_id, household_id)
     expense = Expense(
         user_id=user_id,
@@ -126,8 +108,7 @@ def create_installment_expenses(
     installment_total: int,
     household_id: str | None = None,
 ) -> list[Expense]:
-    if household_id is not None:
-        assert_household_member(db, user_id, household_id)
+    assert_household_scope(db, user_id, household_id)
     _assert_category_accessible(db, user_id, category_id, household_id)
     group_id = str(uuid.uuid4())
     expenses = [
@@ -200,14 +181,9 @@ def delete_expense(
         # A personal group is scoped to (user_id, household_id IS NULL), not
         # household_id IS NULL alone -- otherwise a group-id collision (or a
         # legacy row) could let one user's delete remove another user's rows.
-        scope_clauses = (
-            (Expense.user_id == user_id, Expense.household_id.is_(None))
-            if expense.household_id is None
-            else (Expense.household_id == expense.household_id,)
-        )
         db.execute(
             delete(Expense).where(
-                *scope_clauses,
+                *household_scope_clauses(Expense, user_id, expense.household_id),
                 Expense.installment_group_id == expense.installment_group_id,
             )
         )

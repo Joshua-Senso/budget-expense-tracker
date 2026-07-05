@@ -6,6 +6,7 @@ from sqlalchemy.exc import DataError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.db import Base
+from app.features.categories.models import UserCategory
 
 
 class HouseholdAccessError(Exception):
@@ -73,19 +74,11 @@ def assert_household_member(db: Session, user_id: str, household_id: str) -> Non
         raise HouseholdAccessError(household_id)
 
 
-def is_household_owner(db: Session, user_id: str, household_id: str) -> bool:
-    return get_household_role(db, user_id, household_id) == OWNER_ROLE
-
-
-def assert_household_owner(db: Session, user_id: str, household_id: str) -> None:
-    """Require the owner role for an action on an already-located shared row.
-
-    Only the owner may edit or delete a shared row (PRD §10); members may
-    read and add. Callers must already know the row belongs to `household_id`
-    (e.g. via a prior membership check) -- this only narrows member -> owner.
-    """
-    if not is_household_owner(db, user_id, household_id):
-        raise HouseholdRoleError(household_id)
+def assert_household_scope(db: Session, user_id: str, household_id: str | None) -> None:
+    """Verify membership for a household scope; a no-op for personal scope
+    (`household_id is None`), so callers don't need to guard the call."""
+    if household_id is not None:
+        assert_household_member(db, user_id, household_id)
 
 
 class _HouseholdScopedRow(Protocol):
@@ -139,3 +132,22 @@ def household_scope_clauses(
     if household_id is not None:
         return [model.household_id == household_id]
     return [model.user_id == user_id, model.household_id.is_(None)]
+
+
+def category_accessible(
+    db: Session, user_id: str, category_id: str, household_id: str | None
+) -> bool:
+    """A row scoped to `household_id` (or personal, when `None`) may only
+    reference a category shared in that same scope -- not the creator's
+    personal category, which other household members have no way to resolve
+    when they list the shared row.
+    """
+    return (
+        db.scalar(
+            select(UserCategory.id).where(
+                UserCategory.id == category_id,
+                *household_scope_clauses(UserCategory, user_id, household_id),
+            )
+        )
+        is not None
+    )

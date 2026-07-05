@@ -3,7 +3,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.households import (
-    assert_household_member,
+    assert_household_scope,
     household_scope_clauses,
     locate_household_scoped_row,
 )
@@ -121,24 +121,15 @@ def _locate_category_for_mutation(
 def list_categories(
     db: Session, user_id: str, household_id: str | None = None
 ) -> list[UserCategory]:
-    if household_id is not None:
-        assert_household_member(db, user_id, household_id)
-        return list(
-            db.execute(
-                _scoped_categories_query(user_id, household_id).order_by(
-                    UserCategory.name
-                )
-            )
-            .scalars()
-            .all()
-        )
-
+    assert_household_scope(db, user_id, household_id)
     categories = list(
-        db.execute(_scoped_categories_query(user_id, None).order_by(UserCategory.name))
+        db.execute(
+            _scoped_categories_query(user_id, household_id).order_by(UserCategory.name)
+        )
         .scalars()
         .all()
     )
-    if not categories:
+    if not categories and household_id is None:
         categories = seed_default_categories(db, user_id)
         categories.sort(key=lambda c: c.name)
     return categories
@@ -152,8 +143,7 @@ def create_category(
     expense_group: str,
     household_id: str | None = None,
 ) -> UserCategory:
-    if household_id is not None:
-        assert_household_member(db, user_id, household_id)
+    assert_household_scope(db, user_id, household_id)
     category = UserCategory(
         user_id=user_id,
         name=name,
