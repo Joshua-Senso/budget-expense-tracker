@@ -4,9 +4,9 @@ Every other authorization test in this suite mocks `Session`, which proves
 the right `.where()`/`.get()` call was made but can't catch a bug in the
 actual SQL Postgres executes. This module runs the same service-layer
 functions each router calls -- for expenses, categories, recurring,
-attachments, and budget -- against a live database with two real household
-members and a real outsider, to prove rows never leak across users or across
-non-member households (PRD §15).
+attachments, budget, and import/export -- against a live database with two
+real household members and a real outsider, to prove rows never leak across
+users or across non-member households (PRD §15).
 
 Mirrors `tests/test_households_db.py`'s convention: self-contained, creates
 Better Auth's `users`/`organizations`/`members` shadow tables if this
@@ -50,6 +50,7 @@ from app.features.expenses.service import (
     list_expenses,
     update_expense,
 )
+from app.features.import_export.service import build_year_export_rows
 from app.features.recurring.service import (
     RecurringExpenseNotFoundError,
     create_recurring_expense,
@@ -394,3 +395,20 @@ def test_monthly_setting_isolated_from_other_user(tenants) -> None:
     upsert_monthly_setting(db, member_id, "2026-07", Decimal("30000.00"), "PHP")
     owner_setting = get_monthly_setting(db, owner_id, "2026-07")
     assert owner_setting.monthly_net_salary == Decimal("50000.00")
+
+
+# --- import/export (personal-only; no household support) ---
+
+
+def test_year_export_isolated_from_other_user(tenants) -> None:
+    db, owner_id, member_id, _outsider_id, _household_id = tenants
+    category = create_category(db, owner_id, "Groceries", "#F59E0B", "card")
+    create_expense(
+        db, owner_id, category.id, "Lunch", Decimal("150.00"), "PHP", date(2026, 7, 1)
+    )
+
+    owner_rows = build_year_export_rows(db, owner_id, 2026)
+    member_rows = build_year_export_rows(db, member_id, 2026)
+
+    assert any(row["description"] == "Lunch" for row in owner_rows)
+    assert member_rows == []
