@@ -106,5 +106,28 @@ async function apiFetch<T>(path: string, options: ApiRequestOptions = {}) {
   return (await parseResponseBody(response)) as T
 }
 
-export { ApiError, apiFetch }
+function filenameFromContentDisposition(response: Response) {
+  const header = response.headers.get("Content-Disposition")
+  const match = header?.match(/filename="?([^";]+)"?/)
+  return match?.[1]
+}
+
+async function apiFetchBlob(path: string, options: ApiRequestOptions = {}) {
+  const { response: firstResponse, token } = await fetchWithAuth(path, options)
+  let response = firstResponse
+
+  if (response.status === 401 && token) {
+    clearBearerToken()
+    response = (await fetchWithAuth(path, options)).response
+  }
+
+  if (!response.ok) {
+    const body = await parseResponseBody(response)
+    throw new ApiError(`API request failed: ${response.status}`, response.status, body)
+  }
+
+  return { blob: await response.blob(), filename: filenameFromContentDisposition(response) }
+}
+
+export { ApiError, apiFetch, apiFetchBlob }
 export type { ApiRequestOptions }
