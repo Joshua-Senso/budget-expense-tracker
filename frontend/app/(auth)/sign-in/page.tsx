@@ -66,22 +66,13 @@ function SignInPage() {
     setLoading(provider)
     setError(null)
 
-    try {
-      const { error: signInError } = await authClient.signIn.social({
-        provider,
-        callbackURL: `${window.location.origin}/dashboard`,
-      })
+    const { error: signInError } = await authClient.signIn.social({
+      provider,
+      callbackURL: `${window.location.origin}/dashboard`,
+    })
 
-      if (signInError) {
-        setError(signInError.message ?? "Sign-in failed. Please try again.")
-        setLoading(null)
-      }
-    } catch {
-      // authClient.signIn.social() lets a network-level failure (e.g. the
-      // auth service being unreachable) propagate as a raw fetch exception
-      // instead of the { error } shape above -- catch it so it surfaces in
-      // the same inline error UI rather than crashing the page.
-      setError("Sign-in failed. Please try again.")
+    if (signInError) {
+      setError(signInError.message ?? "Sign-in failed. Please try again.")
       setLoading(null)
     }
   }
