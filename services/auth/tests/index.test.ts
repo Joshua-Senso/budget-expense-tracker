@@ -53,6 +53,25 @@ describe("auth config", () => {
   })
 })
 
+describe("households (organization plugin)", () => {
+  test("the household creator becomes its owner", async () => {
+    const { auth } = await import("../src/auth")
+    const orgPlugin = auth.options.plugins?.find((plugin) => plugin.id === "organization")
+
+    expect(orgPlugin?.options?.creatorRole).toBe("owner")
+  })
+
+  test("extends the organization record with base currency + theme instead of a new table", async () => {
+    const { getAuthTables } = await import("better-auth/db")
+    const { auth } = await import("../src/auth")
+    const tables = getAuthTables(auth.options)
+    const fields = tables.organization?.fields ?? {}
+
+    expect(fields.baseCurrency).toMatchObject({ type: "string", required: false, defaultValue: "PHP" })
+    expect(fields.theme).toMatchObject({ type: "string", required: false, defaultValue: "dark" })
+  })
+})
+
 describe("account linking", () => {
   test("only google is a trusted provider — github and discord rely on emailVerified", async () => {
     const { auth } = await import("../src/auth")
