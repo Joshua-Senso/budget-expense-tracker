@@ -52,6 +52,7 @@ def import_app_models() -> None:
     import app.features.budget.models  # noqa: F401
     import app.features.categories.models  # noqa: F401
     import app.features.expenses.models  # noqa: F401
+    import app.features.recurring.models  # noqa: F401
 
 
 def is_app_table(name: str | None) -> bool:
