@@ -482,6 +482,18 @@ def test_build_import_plan_rejects_invalid_date() -> None:
     assert "Date must be a valid date" in errors[0]["messages"][0]
 
 
+def test_build_import_plan_rejects_date_outside_target_year() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    _, _, _, errors = build_import_plan(
+        db, "user-1", [_row(**{"Date": date(2027, 1, 1)})], 2026
+    )
+
+    assert len(errors) == 1
+    assert errors[0]["messages"] == ["Date must be in 2026."]
+
+
 def test_build_import_plan_rejects_unknown_category() -> None:
     db = _mock_db()
     _queue_db(db, [("Food", "cat-1")], [])

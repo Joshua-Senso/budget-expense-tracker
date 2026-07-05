@@ -423,7 +423,10 @@ def build_import_plan(
     Only rows whose *current* spent_on falls in `year` are eligible update/
     delete targets -- a Row ID for an expense that lives in a different year
     (e.g. pasted in from another year's export by mistake) is rejected as
-    unknown rather than silently edited through this year's import.
+    unknown rather than silently edited through this year's import. Likewise,
+    every row's Date must fall in `year` -- an out-of-year date is rejected
+    rather than silently inserting/moving an expense into a year outside the
+    scope this import is diffing against.
     """
     categories = _owned_categories_by_name(db, user_id)
     by_id = {
@@ -458,6 +461,8 @@ def build_import_plan(
         spent_on, date_error = _parse_spent_on(row.get("Date"))
         if date_error:
             messages.append(date_error)
+        elif spent_on.year != year:
+            messages.append(f"Date must be in {year}.")
 
         category_name = _clean_str(row.get("Category"))
         category_id = categories.get(category_name) if category_name else None
