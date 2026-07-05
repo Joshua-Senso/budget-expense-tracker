@@ -1,5 +1,6 @@
 from sqlalchemy import String, select
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.exc import DataError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.core.db import Base
@@ -42,12 +43,23 @@ class Member(Base):
 
 
 def get_household_role(db: Session, user_id: str, household_id: str) -> str | None:
-    return db.scalar(
-        select(Member.role).where(
-            Member.organization_id == household_id,
-            Member.user_id == user_id,
+    try:
+        return db.scalar(
+            select(Member.role).where(
+                Member.organization_id == household_id,
+                Member.user_id == user_id,
+            )
         )
-    )
+    except DataError:
+        # organization_id/user_id are real Postgres `uuid` columns, so a
+        # malformed id (e.g. a caller-supplied `?household_id=abc`) fails
+        # the cast at the DB level before any row could possibly match --
+        # treat it the same as "not a member" rather than a 500, and roll
+        # back so the aborted transaction doesn't break the rest of the
+        # request. A malformed household_id and a well-formed-but-unknown
+        # one are indistinguishable to the caller either way (both 404).
+        db.rollback()
+        return None
 
 
 def is_household_member(db: Session, user_id: str, household_id: str) -> bool:

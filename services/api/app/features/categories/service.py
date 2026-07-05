@@ -8,6 +8,8 @@ from app.core.households import (
     is_household_member,
 )
 from app.features.categories.models import UserCategory
+from app.features.expenses.models import Expense
+from app.features.recurring.models import RecurringExpense
 
 
 _DEFAULT_CATEGORIES: list[tuple[str, str, str]] = [
@@ -31,6 +33,10 @@ class DuplicateCategoryNameError(Exception):
 
 
 class LastCategoryError(Exception):
+    pass
+
+
+class CategoryInUseError(Exception):
     pass
 
 
@@ -193,8 +199,31 @@ def update_category(
     return category
 
 
+def _category_in_use(db: Session, category_id: str) -> bool:
+    """True if any expense or recurring rule still references this category.
+
+    Expenses/recurring rows store category_id as a plain string (no FK), and
+    dashboard totals inner-join on it -- deleting a referenced category would
+    silently drop those rows from summaries rather than raising, so deletion
+    is blocked instead of allowed to orphan the reference.
+    """
+    return (
+        db.scalar(select(Expense.id).where(Expense.category_id == category_id))
+        is not None
+        or db.scalar(
+            select(RecurringExpense.id).where(
+                RecurringExpense.category_id == category_id
+            )
+        )
+        is not None
+    )
+
+
 def delete_category(db: Session, user_id: str, category_id: str) -> None:
     category = _locate_category_for_mutation(db, user_id, category_id)
+
+    if _category_in_use(db, category_id):
+        raise CategoryInUseError(category_id)
 
     # Lock every category in the same scope so concurrent deletes serialize
     # and cannot both pass the last-category guard.

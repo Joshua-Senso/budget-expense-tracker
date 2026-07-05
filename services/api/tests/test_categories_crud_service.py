@@ -1,11 +1,12 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 
 from app.core.households import HouseholdAccessError, HouseholdRoleError
 from app.features.categories.models import UserCategory
 from app.features.categories.service import (
+    CategoryInUseError,
     CategoryNotFoundError,
     DuplicateCategoryNameError,
     LastCategoryError,
@@ -159,6 +160,7 @@ def test_delete_category_happy_path() -> None:
     cat1 = _make_category(id="cat-1", name="Food")
     cat2 = _make_category(id="cat-2", name="Transport")
     db.get.return_value = cat1
+    db.scalar.return_value = None  # not referenced by any expense/recurring rule
     db.execute.return_value.scalars.return_value.all.return_value = [cat1, cat2]
 
     delete_category(db, "user-1", "cat-1")
@@ -179,6 +181,7 @@ def test_delete_last_category_raises() -> None:
     db = _mock_db()
     cat = _make_category(id="cat-1", name="Food")
     db.get.return_value = cat
+    db.scalar.return_value = None  # not referenced by any expense/recurring rule
     db.execute.return_value.scalars.return_value.all.return_value = [cat]
 
     with pytest.raises(LastCategoryError):
@@ -204,7 +207,9 @@ def test_delete_category_shared_row_allowed_for_owner() -> None:
     db = _mock_db()
     cat = _make_category(id="cat-1", household_id="household-1", user_id="user-2")
     db.get.return_value = cat
-    db.scalar.return_value = "owner"
+    # in call order: membership check, owner-role check, then the two
+    # in-use checks
+    db.scalar.side_effect = ["owner", "owner", None, None]
     db.execute.return_value.scalars.return_value.all.return_value = [
         cat,
         _make_category(id="cat-2", household_id="household-1"),
@@ -216,6 +221,33 @@ def test_delete_category_shared_row_allowed_for_owner() -> None:
     db.commit.assert_called_once()
 
 
+def test_delete_category_in_use_by_expense_raises() -> None:
+    db = _mock_db()
+    cat = _make_category(id="cat-1", name="Food")
+    db.get.return_value = cat
+    db.scalar.return_value = "exp-1"  # an expense references this category
+
+    with pytest.raises(CategoryInUseError):
+        delete_category(db, "user-1", "cat-1")
+
+    db.delete.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_delete_category_in_use_by_recurring_raises() -> None:
+    db = _mock_db()
+    cat = _make_category(id="cat-1", name="Food")
+    db.get.return_value = cat
+    # no expense references it, but a recurring rule does
+    db.scalar.side_effect = [None, "rec-1"]
+
+    with pytest.raises(CategoryInUseError):
+        delete_category(db, "user-1", "cat-1")
+
+    db.delete.assert_not_called()
+    db.commit.assert_not_called()
+
+
 # --- household scoping ---
 
 
@@ -225,6 +257,20 @@ def test_list_categories_household_scope_requires_membership() -> None:
 
     with pytest.raises(HouseholdAccessError):
         list_categories(db, "user-1", household_id="household-1")
+
+
+def test_list_categories_malformed_household_id_raises_access_error_not_500() -> None:
+    """Regression: a malformed household_id (e.g. `?household_id=abc`) fails
+    the Postgres uuid cast with sqlalchemy.exc.DataError deep in the
+    membership lookup; this must surface as HouseholdAccessError (-> a
+    controlled 404 at the router), not an unhandled 500."""
+    db = _mock_db()
+    db.scalar.side_effect = DataError(
+        "stmt", {}, Exception('invalid input syntax for type uuid: "abc"')
+    )
+
+    with pytest.raises(HouseholdAccessError):
+        list_categories(db, "user-1", household_id="not-a-uuid")
 
 
 def test_list_categories_household_scope_returns_shared_rows() -> None:

@@ -11,6 +11,7 @@ from app.features.categories.schemas import (
     CategoryUpdate,
 )
 from app.features.categories.service import (
+    CategoryInUseError,
     CategoryNotFoundError,
     DuplicateCategoryNameError,
     LastCategoryError,
@@ -100,4 +101,10 @@ def delete_category(
     except LastCategoryError:
         raise HTTPException(
             status_code=409, detail="Cannot delete the last remaining category."
+        )
+    except CategoryInUseError:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete a category that still has expenses or "
+            "recurring rules referencing it.",
         )

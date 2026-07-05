@@ -19,6 +19,7 @@ from sqlalchemy import inspect, text
 
 from app.core.db import SessionLocal, engine
 from app.core.households import (
+    HouseholdAccessError,
     HouseholdRoleError,
     assert_household_member,
     assert_household_owner,
@@ -143,6 +144,33 @@ def test_household_membership_lookup_against_real_postgres_uuid_columns() -> Non
         )
         db.execute(text("DELETE FROM users WHERE id = :id"), {"id": owner_id})
         db.commit()
+        db.close()
+        if created_tables:
+            _drop_better_auth_tables()
+
+
+def test_malformed_household_id_is_not_a_member_against_real_postgres() -> None:
+    """Regression guard: organization_id/user_id are real Postgres `uuid`
+    columns, so a caller-supplied non-UUID string (e.g. `?household_id=abc`)
+    fails the cast at the DB level (sqlalchemy.exc.DataError) rather than
+    simply matching zero rows. This must be treated as "not a member" (a
+    controlled 404 at the router), and the session must recover so the rest
+    of the request can still run.
+    """
+    created_tables = _ensure_better_auth_tables()
+    db = SessionLocal()
+    try:
+        assert is_household_member(db, "not-a-uuid", "also-not-a-uuid") is False
+        assert get_household_role(db, "not-a-uuid", "also-not-a-uuid") is None
+        with pytest.raises(HouseholdAccessError):
+            assert_household_member(db, "not-a-uuid", "also-not-a-uuid")
+
+        # The session must still be usable after recovering from the
+        # DataError -- a raw Postgres error leaves the transaction aborted
+        # until rolled back, which would break the rest of the request.
+        assert db.execute(text("SELECT 1")).scalar() == 1
+    finally:
+        db.rollback()
         db.close()
         if created_tables:
             _drop_better_auth_tables()
