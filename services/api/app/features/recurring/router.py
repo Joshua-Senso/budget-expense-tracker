@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.households import HouseholdAccessError
+from app.core.households import HouseholdAccessError, HouseholdRoleError
 from app.core.security import get_current_user_id
 from app.features.recurring import service
 from app.features.recurring.schemas import (
@@ -19,6 +19,9 @@ router = APIRouter(prefix="/recurring", tags=["recurring"])
 
 _MONTH_KEY_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
 _HOUSEHOLD_NOT_FOUND = HTTPException(status_code=404, detail="Household not found.")
+_HOUSEHOLD_OWNER_REQUIRED = HTTPException(
+    status_code=403, detail="Only the household owner can do this."
+)
 
 
 def _parse_month_key(month_key: str) -> tuple[int, int]:
@@ -92,3 +95,5 @@ def stop_recurring_expense(
         service.deactivate_recurring_expense(db, user_id, recurring_id, year, month)
     except RecurringExpenseNotFoundError:
         raise HTTPException(status_code=404, detail="Recurring expense not found.")
+    except HouseholdRoleError:
+        raise _HOUSEHOLD_OWNER_REQUIRED from None

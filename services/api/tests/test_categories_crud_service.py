@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.core.households import HouseholdAccessError
+from app.core.households import HouseholdAccessError, HouseholdRoleError
 from app.features.categories.models import UserCategory
 from app.features.categories.service import (
     CategoryNotFoundError,
@@ -187,6 +187,35 @@ def test_delete_last_category_raises() -> None:
     db.delete.assert_not_called()
 
 
+def test_delete_category_shared_row_forbidden_for_non_owner_member() -> None:
+    """Only the household owner may delete a shared category (PRD §10)."""
+    db = _mock_db()
+    cat = _make_category(household_id="household-1", user_id="user-2")
+    db.get.return_value = cat
+    db.scalar.return_value = "member"  # requester is a member, not the owner
+
+    with pytest.raises(HouseholdRoleError):
+        delete_category(db, "user-1", "cat-1")
+
+    db.delete.assert_not_called()
+
+
+def test_delete_category_shared_row_allowed_for_owner() -> None:
+    db = _mock_db()
+    cat = _make_category(id="cat-1", household_id="household-1", user_id="user-2")
+    db.get.return_value = cat
+    db.scalar.return_value = "owner"
+    db.execute.return_value.scalars.return_value.all.return_value = [
+        cat,
+        _make_category(id="cat-2", household_id="household-1"),
+    ]
+
+    delete_category(db, "user-1", "cat-1")
+
+    db.delete.assert_called_once_with(cat)
+    db.commit.assert_called_once()
+
+
 # --- household scoping ---
 
 
@@ -234,16 +263,30 @@ def test_create_category_household_scope_happy_path() -> None:
     db.commit.assert_called_once()
 
 
-def test_update_category_shared_row_accessible_to_household_member() -> None:
+def test_update_category_shared_row_accessible_to_household_owner() -> None:
     db = _mock_db()
     cat = _make_category(household_id="household-1", user_id="user-2")
     db.get.return_value = cat
-    db.scalar.return_value = "member-1"  # requester is a member of household-1
+    db.scalar.return_value = "owner"  # requester owns household-1
 
     result = update_category(db, "user-1", "cat-1", name="Groceries")
 
     assert result.name == "Groceries"
     db.commit.assert_called_once()
+
+
+def test_update_category_shared_row_forbidden_for_non_owner_member() -> None:
+    """Only the household owner may edit a shared category (PRD §10);
+    members may read and add but not edit/delete."""
+    db = _mock_db()
+    cat = _make_category(household_id="household-1", user_id="user-2")
+    db.get.return_value = cat
+    db.scalar.return_value = "member"  # requester is a member, not the owner
+
+    with pytest.raises(HouseholdRoleError):
+        update_category(db, "user-1", "cat-1", name="Groceries")
+
+    db.commit.assert_not_called()
 
 
 def test_update_category_shared_row_inaccessible_to_non_member() -> None:

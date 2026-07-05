@@ -5,6 +5,7 @@ import pytest
 from botocore.exceptions import ClientError
 from sqlalchemy.exc import IntegrityError
 
+from app.core.households import HouseholdRoleError
 from app.core.storage import StorageNotConfiguredError
 from app.features.attachments.models import ExpenseAttachment
 from app.features.attachments.service import (
@@ -281,6 +282,38 @@ def test_delete_attachment_removes_object_and_row(monkeypatch) -> None:
     client.delete_object.assert_called_once()
     db.delete.assert_called_once_with(attachment)
     db.commit.assert_called_once()
+
+
+def test_delete_attachment_shared_expense_allowed_for_owner(monkeypatch) -> None:
+    db = _mock_db()
+    attachment = _make_attachment()
+    db.get.return_value = _make_expense(household_id="household-1", user_id="user-2")
+    db.scalar.return_value = "owner"  # requester owns household-1
+    db.execute.return_value = _result(attachment)
+    client = _mock_s3(monkeypatch)
+
+    delete_attachment(db, "user-1", "exp-1", "att-1")
+
+    client.delete_object.assert_called_once()
+    db.delete.assert_called_once_with(attachment)
+
+
+def test_delete_attachment_shared_expense_forbidden_for_non_owner_member(
+    monkeypatch,
+) -> None:
+    """Only the household owner may delete a receipt from a shared expense
+    (PRD §10); members may add/view but not edit/delete."""
+    db = _mock_db()
+    attachment = _make_attachment()
+    db.get.return_value = _make_expense(household_id="household-1", user_id="user-2")
+    db.scalar.return_value = "member"  # requester is a member, not the owner
+    db.execute.return_value = _result(attachment)
+    _mock_s3(monkeypatch)
+
+    with pytest.raises(HouseholdRoleError):
+        delete_attachment(db, "user-1", "exp-1", "att-1")
+
+    db.delete.assert_not_called()
 
 
 def test_delete_attachment_commits_db_row_before_deleting_s3_object(

@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.households import is_household_member
+from app.core.households import assert_household_owner, is_household_member
 from app.core.storage import (
     StorageNotConfiguredError,
     get_receipts_bucket,
@@ -64,11 +64,11 @@ def _get_owned_expense(db: Session, user_id: str, expense_id: str) -> Expense:
 
 def _get_owned_attachment(
     db: Session, user_id: str, expense_id: str, attachment_id: str
-) -> ExpenseAttachment:
+) -> tuple[Expense, ExpenseAttachment]:
     # Access to the expense (personal or household) already gates access to
     # every attachment on it -- not just the ones this caller uploaded, so
     # household members can see each other's receipts on a shared expense.
-    _get_owned_expense(db, user_id, expense_id)
+    expense = _get_owned_expense(db, user_id, expense_id)
     attachment = db.execute(
         select(ExpenseAttachment).where(
             ExpenseAttachment.id == attachment_id,
@@ -77,7 +77,7 @@ def _get_owned_attachment(
     ).scalar_one_or_none()
     if attachment is None:
         raise AttachmentNotFoundError(attachment_id)
-    return attachment
+    return expense, attachment
 
 
 def _validate_content_type(content_type: str) -> None:
@@ -182,7 +182,7 @@ def list_attachments(
 def create_download_url(
     db: Session, user_id: str, expense_id: str, attachment_id: str
 ) -> str:
-    attachment = _get_owned_attachment(db, user_id, expense_id, attachment_id)
+    _, attachment = _get_owned_attachment(db, user_id, expense_id, attachment_id)
     return get_s3_client().generate_presigned_url(
         "get_object",
         Params={"Bucket": get_receipts_bucket(), "Key": attachment.object_key},
@@ -193,7 +193,11 @@ def create_download_url(
 def delete_attachment(
     db: Session, user_id: str, expense_id: str, attachment_id: str
 ) -> None:
-    attachment = _get_owned_attachment(db, user_id, expense_id, attachment_id)
+    # Deleting a receipt from a shared expense is edit-like, so it's
+    # restricted to the household owner (PRD §10); members may add/view.
+    expense, attachment = _get_owned_attachment(db, user_id, expense_id, attachment_id)
+    if expense.household_id is not None:
+        assert_household_owner(db, user_id, expense.household_id)
     object_key = attachment.object_key
     db.delete(attachment)
     db.commit()

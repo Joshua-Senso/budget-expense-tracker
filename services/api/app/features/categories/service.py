@@ -2,7 +2,11 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.households import assert_household_member, is_household_member
+from app.core.households import (
+    assert_household_member,
+    assert_household_owner,
+    is_household_member,
+)
 from app.features.categories.models import UserCategory
 
 
@@ -108,6 +112,17 @@ def _locate_category(db: Session, user_id: str, category_id: str) -> UserCategor
     return category
 
 
+def _locate_category_for_mutation(
+    db: Session, user_id: str, category_id: str
+) -> UserCategory:
+    """Locate a category for edit/delete: only the household owner may edit
+    or delete a shared category (PRD §10); members may read and add."""
+    category = _locate_category(db, user_id, category_id)
+    if category.household_id is not None:
+        assert_household_owner(db, user_id, category.household_id)
+    return category
+
+
 def list_categories(
     db: Session, user_id: str, household_id: str | None = None
 ) -> list[UserCategory]:
@@ -164,7 +179,7 @@ def update_category(
     color: str | None = None,
     expense_group: str | None = None,
 ) -> UserCategory:
-    category = _locate_category(db, user_id, category_id)
+    category = _locate_category_for_mutation(db, user_id, category_id)
 
     for attr, value in [
         ("name", name),
@@ -179,7 +194,7 @@ def update_category(
 
 
 def delete_category(db: Session, user_id: str, category_id: str) -> None:
-    category = _locate_category(db, user_id, category_id)
+    category = _locate_category_for_mutation(db, user_id, category_id)
 
     # Lock every category in the same scope so concurrent deletes serialize
     # and cannot both pass the last-category guard.

@@ -6,7 +6,11 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.households import assert_household_member, is_household_member
+from app.core.households import (
+    assert_household_member,
+    assert_household_owner,
+    is_household_member,
+)
 from app.features.categories.models import UserCategory
 from app.features.expenses.models import Expense
 from app.features.recurring.models import RecurringExpense
@@ -41,6 +45,17 @@ def _locate_recurring(db: Session, user_id: str, recurring_id: str) -> Recurring
             raise RecurringExpenseNotFoundError(recurring_id)
     elif not is_household_member(db, user_id, recurring.household_id):
         raise RecurringExpenseNotFoundError(recurring_id)
+    return recurring
+
+
+def _locate_recurring_for_mutation(
+    db: Session, user_id: str, recurring_id: str
+) -> RecurringExpense:
+    """Locate a rule for edit/delete: only the household owner may edit or
+    stop a shared rule (PRD §10); members may read and add."""
+    recurring = _locate_recurring(db, user_id, recurring_id)
+    if recurring.household_id is not None:
+        assert_household_owner(db, user_id, recurring.household_id)
     return recurring
 
 
@@ -136,7 +151,7 @@ def deactivate_recurring_expense(
     projected, while occurrences already projected for that month and earlier
     remain unaffected (PRD 7.3).
     """
-    recurring = _locate_recurring(db, user_id, recurring_id)
+    recurring = _locate_recurring_for_mutation(db, user_id, recurring_id)
 
     _, month_end = _month_bounds(year, month)
     if recurring.end_on is None or month_end < recurring.end_on:

@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.households import assert_household_member
 from app.features.budget.service import MonthlySettingNotFoundError, get_monthly_setting
 from app.features.categories.models import UserCategory
 from app.features.expenses.models import Expense
@@ -26,8 +27,26 @@ def _year_bounds(year: int) -> tuple[date, date]:
     return date(year, 1, 1), date(year, 12, 31)
 
 
+def _scope_conditions(user_id: str, household_id: str | None) -> list[Any]:
+    if household_id is not None:
+        return [
+            Expense.household_id == household_id,
+            UserCategory.household_id == household_id,
+        ]
+    return [
+        Expense.user_id == user_id,
+        Expense.household_id.is_(None),
+        UserCategory.user_id == user_id,
+        UserCategory.household_id.is_(None),
+    ]
+
+
 def _category_totals(
-    db: Session, user_id: str, month_start: date, month_end: date
+    db: Session,
+    user_id: str,
+    household_id: str | None,
+    month_start: date,
+    month_end: date,
 ) -> list[Any]:
     query = (
         select(
@@ -39,11 +58,8 @@ def _category_totals(
         )
         .join(Expense, Expense.category_id == UserCategory.id)
         .where(
-            Expense.user_id == user_id,
-            Expense.household_id.is_(None),
+            *_scope_conditions(user_id, household_id),
             Expense.spent_on.between(month_start, month_end),
-            UserCategory.user_id == user_id,
-            UserCategory.household_id.is_(None),
         )
         .group_by(
             UserCategory.id,
@@ -56,7 +72,11 @@ def _category_totals(
 
 
 def _monthly_group_totals(
-    db: Session, user_id: str, year_start: date, year_end: date
+    db: Session,
+    user_id: str,
+    household_id: str | None,
+    year_start: date,
+    year_end: date,
 ) -> list[Any]:
     query = (
         select(
@@ -66,20 +86,21 @@ def _monthly_group_totals(
         )
         .join(Expense, Expense.category_id == UserCategory.id)
         .where(
-            Expense.user_id == user_id,
-            Expense.household_id.is_(None),
+            *_scope_conditions(user_id, household_id),
             Expense.spent_on.between(year_start, year_end),
-            UserCategory.user_id == user_id,
-            UserCategory.household_id.is_(None),
         )
         .group_by(func.extract("month", Expense.spent_on), UserCategory.expense_group)
     )
     return list(db.execute(query).all())
 
 
-def get_yearly_overview(db: Session, user_id: str, year: int) -> dict:
+def get_yearly_overview(
+    db: Session, user_id: str, year: int, household_id: str | None = None
+) -> dict:
+    if household_id is not None:
+        assert_household_member(db, user_id, household_id)
     year_start, year_end = _year_bounds(year)
-    rows = _monthly_group_totals(db, user_id, year_start, year_end)
+    rows = _monthly_group_totals(db, user_id, household_id, year_start, year_end)
 
     card_totals: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
     other_totals: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
@@ -109,9 +130,13 @@ def get_yearly_overview(db: Session, user_id: str, year: int) -> dict:
     return {"year": year, "months": months, "year_total": year_total}
 
 
-def get_dashboard_summary(db: Session, user_id: str, month_key: str) -> dict:
+def get_dashboard_summary(
+    db: Session, user_id: str, month_key: str, household_id: str | None = None
+) -> dict:
+    if household_id is not None:
+        assert_household_member(db, user_id, household_id)
     month_start, month_end = _month_bounds(month_key)
-    rows = _category_totals(db, user_id, month_start, month_end)
+    rows = _category_totals(db, user_id, household_id, month_start, month_end)
 
     groups: dict[str, list[dict]] = {"card": [], "other": []}
     totals: dict[str, Decimal] = {"card": Decimal("0"), "other": Decimal("0")}
@@ -124,12 +149,17 @@ def get_dashboard_summary(db: Session, user_id: str, month_key: str) -> dict:
 
     month_total = totals["card"] + totals["other"]
 
-    try:
-        monthly_net_salary = get_monthly_setting(
-            db, user_id, month_key
-        ).monthly_net_salary
-    except MonthlySettingNotFoundError:
-        monthly_net_salary = None
+    # Household-level salary/budget settings don't exist yet (PRD §14 open
+    # question); a household summary reports totals only, no salary-derived
+    # fields, rather than mixing in the caller's personal salary.
+    monthly_net_salary = None
+    if household_id is None:
+        try:
+            monthly_net_salary = get_monthly_setting(
+                db, user_id, month_key
+            ).monthly_net_salary
+        except MonthlySettingNotFoundError:
+            monthly_net_salary = None
 
     remaining = (
         monthly_net_salary - month_total if monthly_net_salary is not None else None

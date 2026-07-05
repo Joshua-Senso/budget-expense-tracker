@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.households import HouseholdRoleError
 from app.core.security import get_current_user_id
 from app.features.attachments import service
 from app.features.attachments.schemas import (
@@ -23,6 +24,9 @@ router = APIRouter(prefix="/expenses/{expense_id}/attachments", tags=["attachmen
 
 _EXPENSE_NOT_FOUND = HTTPException(status_code=404, detail="Expense not found.")
 _ATTACHMENT_NOT_FOUND = HTTPException(status_code=404, detail="Attachment not found.")
+_HOUSEHOLD_OWNER_REQUIRED = HTTPException(
+    status_code=403, detail="Only the household owner can do this."
+)
 
 
 @router.post(
@@ -130,3 +134,5 @@ def delete_attachment(
         raise _EXPENSE_NOT_FOUND from None
     except AttachmentNotFoundError:
         raise _ATTACHMENT_NOT_FOUND from None
+    except HouseholdRoleError:
+        raise _HOUSEHOLD_OWNER_REQUIRED from None

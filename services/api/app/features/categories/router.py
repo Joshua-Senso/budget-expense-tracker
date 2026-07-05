@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.households import HouseholdAccessError
+from app.core.households import HouseholdAccessError, HouseholdRoleError
 from app.core.security import get_current_user_id
 from app.features.categories import service
 from app.features.categories.schemas import (
@@ -19,6 +19,9 @@ from app.features.categories.service import (
 router = APIRouter(prefix="/categories", tags=["categories"])
 
 _HOUSEHOLD_NOT_FOUND = HTTPException(status_code=404, detail="Household not found.")
+_HOUSEHOLD_OWNER_REQUIRED = HTTPException(
+    status_code=403, detail="Only the household owner can do this."
+)
 
 
 @router.get("", response_model=list[CategoryResponse])
@@ -74,6 +77,8 @@ def update_category(
         )
     except CategoryNotFoundError:
         raise HTTPException(status_code=404, detail="Category not found.")
+    except HouseholdRoleError:
+        raise _HOUSEHOLD_OWNER_REQUIRED from None
     except DuplicateCategoryNameError:
         raise HTTPException(
             status_code=409, detail="A category with that name already exists."
@@ -90,6 +95,8 @@ def delete_category(
         service.delete_category(db, user_id, category_id)
     except CategoryNotFoundError:
         raise HTTPException(status_code=404, detail="Category not found.")
+    except HouseholdRoleError:
+        raise _HOUSEHOLD_OWNER_REQUIRED from None
     except LastCategoryError:
         raise HTTPException(
             status_code=409, detail="Cannot delete the last remaining category."

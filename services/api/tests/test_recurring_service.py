@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from app.core.households import HouseholdAccessError
+from app.core.households import HouseholdAccessError, HouseholdRoleError
 from app.features.recurring.models import RecurringExpense
 from app.features.recurring.service import (
     CategoryOwnershipError,
@@ -427,13 +427,13 @@ def test_create_recurring_expense_household_scope_category_check_excludes_person
     assert "user_id" not in str(category_check_query)
 
 
-def test_deactivate_recurring_expense_shared_row_accessible_to_household_member() -> (
+def test_deactivate_recurring_expense_shared_row_accessible_to_household_owner() -> (
     None
 ):
     db = _mock_db()
     rule = _make_rule(household_id="household-1", user_id="user-2", end_on=None)
     db.get.return_value = rule
-    db.scalar.return_value = "member-1"  # requester is a member of household-1
+    db.scalar.return_value = "owner"  # requester owns household-1
 
     result = deactivate_recurring_expense(db, "user-1", "rec-1", 2026, 7)
 
@@ -447,4 +447,18 @@ def test_deactivate_recurring_expense_shared_row_inaccessible_to_non_member() ->
     db.scalar.return_value = None  # requester is not a member
 
     with pytest.raises(RecurringExpenseNotFoundError):
+        deactivate_recurring_expense(db, "user-1", "rec-1", 2026, 7)
+
+
+def test_deactivate_recurring_expense_shared_row_forbidden_for_non_owner_member() -> (
+    None
+):
+    """Only the household owner may stop a shared recurring rule (PRD §10);
+    members may read and add but not edit/delete."""
+    db = _mock_db()
+    rule = _make_rule(household_id="household-1", user_id="user-2")
+    db.get.return_value = rule
+    db.scalar.return_value = "member"  # requester is a member, not the owner
+
+    with pytest.raises(HouseholdRoleError):
         deactivate_recurring_expense(db, "user-1", "rec-1", 2026, 7)

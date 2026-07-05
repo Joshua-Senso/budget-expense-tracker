@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from app.core.households import HouseholdAccessError
+from app.core.households import HouseholdAccessError, HouseholdRoleError
 from app.features.expenses.models import Expense
 from app.features.expenses.service import (
     CategoryOwnershipError,
@@ -302,7 +302,7 @@ def test_delete_expense_group_scope_household_rows_not_scoped_to_deleter() -> No
         installment_group_id="grp-1", household_id="household-1", user_id="user-2"
     )
     db.get.return_value = exp
-    db.scalar.return_value = "member-1"  # requester is a member of household-1
+    db.scalar.return_value = "owner"  # requester owns household-1
 
     delete_expense(db, "user-1", "exp-1", scope="group")
 
@@ -427,11 +427,11 @@ def test_create_expense_household_scope_category_check_excludes_personal_fallbac
     assert "user_id" not in str(category_check_query)
 
 
-def test_update_expense_shared_row_accessible_to_household_member() -> None:
+def test_update_expense_shared_row_accessible_to_household_owner() -> None:
     db = _mock_db()
     exp = _make_expense(household_id="household-1", user_id="user-2")
     db.get.return_value = exp
-    db.scalar.return_value = "member-1"  # requester is a member of household-1
+    db.scalar.return_value = "owner"  # requester owns household-1
 
     result = update_expense(db, "user-1", "exp-1", description="Dinner")
 
@@ -447,3 +447,29 @@ def test_update_expense_shared_row_inaccessible_to_non_member() -> None:
 
     with pytest.raises(ExpenseNotFoundError):
         update_expense(db, "user-1", "exp-1", description="Dinner")
+
+
+def test_update_expense_shared_row_forbidden_for_non_owner_member() -> None:
+    """Only the household owner may edit a shared expense (PRD §10); members
+    may read and add but not edit/delete."""
+    db = _mock_db()
+    exp = _make_expense(household_id="household-1", user_id="user-2")
+    db.get.return_value = exp
+    db.scalar.return_value = "member"  # requester is a member, not the owner
+
+    with pytest.raises(HouseholdRoleError):
+        update_expense(db, "user-1", "exp-1", description="Dinner")
+
+    db.commit.assert_not_called()
+
+
+def test_delete_expense_shared_row_forbidden_for_non_owner_member() -> None:
+    db = _mock_db()
+    exp = _make_expense(household_id="household-1", user_id="user-2")
+    db.get.return_value = exp
+    db.scalar.return_value = "member"  # requester is a member, not the owner
+
+    with pytest.raises(HouseholdRoleError):
+        delete_expense(db, "user-1", "exp-1")
+
+    db.delete.assert_not_called()
