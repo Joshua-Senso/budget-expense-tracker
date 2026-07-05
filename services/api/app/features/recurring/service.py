@@ -134,7 +134,9 @@ def project_month(
             description=rule.description,
             amount=rule.amount,
             currency=rule.currency,
-            spent_on=_occurrence_date(rule.start_on, year, month),
+            spent_on=spent_on,
         )
         for rule in rules
+        if (spent_on := _occurrence_date(rule.start_on, year, month)) >= rule.start_on
+        and (rule.end_on is None or spent_on <= rule.end_on)
     ]

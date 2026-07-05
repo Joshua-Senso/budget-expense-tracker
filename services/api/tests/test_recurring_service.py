@@ -142,6 +142,33 @@ def test_project_month_preserves_historical_occurrence_after_end_on() -> None:
     assert result[0].spent_on == date(2026, 3, 15)
 
 
+def test_project_month_excludes_occurrence_clamped_past_end_on() -> None:
+    """A day-31 rule ending mid-April must not clamp forward to April 30.
+
+    Regression guard: the month-overlap query alone let a Jan-31 rule with
+    end_on=2026-04-15 through for April, and _occurrence_date used to clamp
+    that to 2026-04-30 -- after the rule had already ended.
+    """
+    db = _mock_db()
+    rule = _make_rule(start_on=date(2026, 1, 31), end_on=date(2026, 4, 15))
+    db.execute.return_value.scalars.return_value.all.return_value = [rule]
+
+    result = project_month(db, "user-1", 2026, 4)
+
+    assert result == []
+
+
+def test_project_month_includes_occurrence_exactly_on_end_on() -> None:
+    db = _mock_db()
+    rule = _make_rule(start_on=date(2026, 1, 31), end_on=date(2026, 4, 30))
+    db.execute.return_value.scalars.return_value.all.return_value = [rule]
+
+    result = project_month(db, "user-1", 2026, 4)
+
+    assert len(result) == 1
+    assert result[0].spent_on == date(2026, 4, 30)
+
+
 # --- deactivate_recurring_expense ---
 
 
