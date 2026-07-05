@@ -5,6 +5,7 @@ import pytest
 from botocore.exceptions import ClientError
 from sqlalchemy.exc import IntegrityError
 
+from app.core.storage import StorageNotConfiguredError
 from app.features.attachments.models import ExpenseAttachment
 from app.features.attachments.service import (
     MAX_SIZE_BYTES,
@@ -318,3 +319,30 @@ def test_delete_attachment_swallows_s3_failure_after_db_commit(monkeypatch) -> N
     delete_attachment(db, "user-1", "exp-1", "att-1")
 
     db.commit.assert_called_once()
+
+
+def test_delete_attachment_swallows_storage_not_configured_after_db_commit(
+    monkeypatch,
+) -> None:
+    """The DB row is already deleted+committed by the time the storage cleanup
+    step runs, so a StorageNotConfiguredError there must not surface as an
+    error -- the caller already got the delete they asked for (see the
+    Greptile finding on PR #101: this used to leak as an unhandled 503 after
+    the row was already gone)."""
+    db = _mock_db()
+    attachment = _make_attachment()
+    db.execute.side_effect = [_result(_make_expense()), _result(attachment)]
+    monkeypatch.setattr(
+        "app.features.attachments.service.get_receipts_bucket",
+        lambda: (_ for _ in ()).throw(
+            StorageNotConfiguredError("Receipt storage is not configured")
+        ),
+    )
+    monkeypatch.setattr(
+        "app.features.attachments.service.get_s3_client", lambda: MagicMock()
+    )
+
+    delete_attachment(db, "user-1", "exp-1", "att-1")
+
+    db.commit.assert_called_once()
+    db.delete.assert_called_once_with(attachment)

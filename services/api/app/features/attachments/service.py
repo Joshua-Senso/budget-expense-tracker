@@ -5,7 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.storage import get_receipts_bucket, get_s3_client
+from app.core.storage import (
+    StorageNotConfiguredError,
+    get_receipts_bucket,
+    get_s3_client,
+)
 from app.features.attachments.models import ExpenseAttachment
 from app.features.expenses.models import Expense
 
@@ -195,9 +199,12 @@ def delete_attachment(
     db.commit()
 
     # DB row is the source of truth for what's listable/downloadable, so it's
-    # deleted first: if this S3 call fails, the object is merely orphaned
-    # (a storage-cost cleanup concern) rather than a row pointing at nothing.
+    # deleted first: if this S3 cleanup step fails for any reason -- a bucket
+    # error, or storage not being configured at all -- the object is merely
+    # orphaned (a storage-cost concern), not a row pointing at nothing. Since
+    # the row is already gone, that failure must not surface as an error to
+    # the caller, who already got the delete they asked for.
     try:
         get_s3_client().delete_object(Bucket=get_receipts_bucket(), Key=object_key)
-    except ClientError:
+    except (ClientError, StorageNotConfiguredError):
         pass
