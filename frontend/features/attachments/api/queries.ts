@@ -16,9 +16,12 @@ function useAttachments(expenseId: string) {
 
 // Signed URLs expire after service.DOWNLOAD_URL_EXPIRES_IN (300s). staleTime
 // alone only affects refetch-on-(re)mount -- a thumbnail left mounted past
-// that window would otherwise keep serving the same, now-dead, URL. Combine
-// it with refetchInterval so an open dialog also refreshes in the background,
-// well before expiry.
+// that window would otherwise keep serving the same, now-dead, URL, so this
+// also needs an active refresh trigger. refetchInterval covers a dialog left
+// open and foregrounded, but it (like all query activity) pauses while the
+// tab is hidden. The query-client default also turns off refetchOnWindowFocus
+// app-wide, so switching tabs away and back would otherwise skip a refetch
+// entirely -- override it here so regaining focus/visibility always revalidates.
 const DOWNLOAD_URL_REFRESH_MS = 4 * 60 * 1000
 
 function useAttachmentDownloadUrl(expenseId: string, attachmentId: string) {
@@ -30,6 +33,7 @@ function useAttachmentDownloadUrl(expenseId: string, attachmentId: string) {
       ),
     staleTime: DOWNLOAD_URL_REFRESH_MS,
     refetchInterval: DOWNLOAD_URL_REFRESH_MS,
+    refetchOnWindowFocus: true,
   })
 }
 
