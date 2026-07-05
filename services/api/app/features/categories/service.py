@@ -2,6 +2,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.households import assert_household_member, is_household_member
 from app.features.categories.models import UserCategory
 
 
@@ -86,16 +87,44 @@ def seed_default_categories(db: Session, user_id: str) -> list[UserCategory]:
     return categories
 
 
-def _personal_categories_query(user_id: str):
+def _scoped_categories_query(user_id: str, household_id: str | None):
+    if household_id is not None:
+        return select(UserCategory).where(UserCategory.household_id == household_id)
     return select(UserCategory).where(
         UserCategory.user_id == user_id,
         UserCategory.household_id.is_(None),
     )
 
 
-def list_categories(db: Session, user_id: str) -> list[UserCategory]:
+def _locate_category(db: Session, user_id: str, category_id: str) -> UserCategory:
+    category = db.get(UserCategory, category_id)
+    if category is None:
+        raise CategoryNotFoundError(category_id)
+    if category.household_id is None:
+        if category.user_id != user_id:
+            raise CategoryNotFoundError(category_id)
+    elif not is_household_member(db, user_id, category.household_id):
+        raise CategoryNotFoundError(category_id)
+    return category
+
+
+def list_categories(
+    db: Session, user_id: str, household_id: str | None = None
+) -> list[UserCategory]:
+    if household_id is not None:
+        assert_household_member(db, user_id, household_id)
+        return list(
+            db.execute(
+                _scoped_categories_query(user_id, household_id).order_by(
+                    UserCategory.name
+                )
+            )
+            .scalars()
+            .all()
+        )
+
     categories = list(
-        db.execute(_personal_categories_query(user_id).order_by(UserCategory.name))
+        db.execute(_scoped_categories_query(user_id, None).order_by(UserCategory.name))
         .scalars()
         .all()
     )
@@ -111,9 +140,16 @@ def create_category(
     name: str,
     color: str,
     expense_group: str,
+    household_id: str | None = None,
 ) -> UserCategory:
+    if household_id is not None:
+        assert_household_member(db, user_id, household_id)
     category = UserCategory(
-        user_id=user_id, name=name, color=color, expense_group=expense_group
+        user_id=user_id,
+        name=name,
+        color=color,
+        expense_group=expense_group,
+        household_id=household_id,
     )
     db.add(category)
     _commit_or_raise_duplicate(db, name)
@@ -128,11 +164,7 @@ def update_category(
     color: str | None = None,
     expense_group: str | None = None,
 ) -> UserCategory:
-    category = db.execute(
-        _personal_categories_query(user_id).where(UserCategory.id == category_id)
-    ).scalar_one_or_none()
-    if category is None:
-        raise CategoryNotFoundError(category_id)
+    category = _locate_category(db, user_id, category_id)
 
     for attr, value in [
         ("name", name),
@@ -147,16 +179,17 @@ def update_category(
 
 
 def delete_category(db: Session, user_id: str, category_id: str) -> None:
-    # Lock all personal categories for this user so concurrent deletes
-    # serialize and cannot both pass the last-category guard.
+    category = _locate_category(db, user_id, category_id)
+
+    # Lock every category in the same scope so concurrent deletes serialize
+    # and cannot both pass the last-category guard.
     all_categories = list(
-        db.execute(_personal_categories_query(user_id).with_for_update())
+        db.execute(
+            _scoped_categories_query(user_id, category.household_id).with_for_update()
+        )
         .scalars()
         .all()
     )
-    category = next((c for c in all_categories if c.id == category_id), None)
-    if category is None:
-        raise CategoryNotFoundError(category_id)
     if len(all_categories) <= 1:
         raise LastCategoryError()
 

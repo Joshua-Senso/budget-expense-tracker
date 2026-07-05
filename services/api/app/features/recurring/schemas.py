@@ -35,6 +35,7 @@ class RecurringExpenseCreate(BaseModel):
     currency: str = "PHP"
     start_on: date
     end_on: date | None = None
+    household_id: str | None = None
 
     @field_validator("description")
     @classmethod
@@ -64,6 +65,7 @@ class RecurringExpenseCreate(BaseModel):
 class RecurringExpenseResponse(BaseModel):
     id: str
     user_id: str
+    household_id: str | None = None
     category_id: str
     description: str
     amount: Decimal

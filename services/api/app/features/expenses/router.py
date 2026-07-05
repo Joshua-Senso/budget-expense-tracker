@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.households import HouseholdAccessError
 from app.core.security import get_current_user_id
 from app.features.expenses import service
 from app.features.expenses.schemas import (
@@ -16,15 +17,23 @@ from app.features.expenses.service import CategoryOwnershipError, ExpenseNotFoun
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
+_HOUSEHOLD_NOT_FOUND = HTTPException(status_code=404, detail="Household not found.")
+
 
 @router.get("", response_model=list[ExpenseResponse])
 def list_expenses(
     year: int | None = Query(default=None, ge=1, le=9999),
     month: int | None = Query(default=None, ge=1, le=12),
+    household_id: str | None = Query(default=None),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[ExpenseResponse]:
-    return service.list_expenses(db, user_id, year=year, month=month)
+    try:
+        return service.list_expenses(
+            db, user_id, year=year, month=month, household_id=household_id
+        )
+    except HouseholdAccessError:
+        raise _HOUSEHOLD_NOT_FOUND from None
 
 
 @router.post("", response_model=ExpenseResponse, status_code=status.HTTP_201_CREATED)
@@ -42,7 +51,10 @@ def create_expense(
             body.amount,
             body.currency,
             body.spent_on,
+            household_id=body.household_id,
         )
+    except HouseholdAccessError:
+        raise _HOUSEHOLD_NOT_FOUND from None
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
 
@@ -67,7 +79,10 @@ def create_installment_expenses(
             body.currency,
             body.spent_on,
             body.installment_total,
+            household_id=body.household_id,
         )
+    except HouseholdAccessError:
+        raise _HOUSEHOLD_NOT_FOUND from None
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
 

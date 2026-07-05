@@ -2,7 +2,16 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, DateTime, Index, Numeric, String, func
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    DateTime,
+    Index,
+    Numeric,
+    String,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -60,6 +69,12 @@ class Expense(Base):
             name="ck_expenses_installment_metadata",
         ),
         Index("ix_expenses_user_spent_on", "user_id", "spent_on"),
+        Index(
+            "ix_expenses_household_spent_on",
+            "household_id",
+            "spent_on",
+            postgresql_where=text("household_id IS NOT NULL"),
+        ),
         Index("ix_expenses_installment_group_id", "installment_group_id"),
         Index(
             "ux_expenses_recurring_expense_id_spent_on",

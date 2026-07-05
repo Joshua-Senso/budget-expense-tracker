@@ -4,9 +4,10 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import Session
 
+from app.core.households import assert_household_member, is_household_member
 from app.features.categories.models import UserCategory
 from app.features.expenses.models import Expense
 
@@ -19,22 +20,43 @@ class CategoryOwnershipError(Exception):
     pass
 
 
-def _own_expense_query(user_id: str):
+def _scoped_expense_query(user_id: str, household_id: str | None):
+    if household_id is not None:
+        return select(Expense).where(Expense.household_id == household_id)
     return select(Expense).where(
         Expense.user_id == user_id,
         Expense.household_id.is_(None),
     )
 
 
-def _assert_category_owned(db: Session, user_id: str, category_id: str) -> None:
-    owned = db.scalar(
+def _locate_expense(db: Session, user_id: str, expense_id: str) -> Expense:
+    expense = db.get(Expense, expense_id)
+    if expense is None:
+        raise ExpenseNotFoundError(expense_id)
+    if expense.household_id is None:
+        if expense.user_id != user_id:
+            raise ExpenseNotFoundError(expense_id)
+    elif not is_household_member(db, user_id, expense.household_id):
+        raise ExpenseNotFoundError(expense_id)
+    return expense
+
+
+def _assert_category_accessible(
+    db: Session, user_id: str, category_id: str, household_id: str | None
+) -> None:
+    conditions = [
+        UserCategory.household_id.is_(None) & (UserCategory.user_id == user_id)
+    ]
+    if household_id is not None:
+        conditions.append(UserCategory.household_id == household_id)
+
+    accessible = db.scalar(
         select(UserCategory.id).where(
             UserCategory.id == category_id,
-            UserCategory.user_id == user_id,
-            UserCategory.household_id.is_(None),
+            or_(*conditions),
         )
     )
-    if owned is None:
+    if accessible is None:
         raise CategoryOwnershipError(category_id)
 
 
@@ -43,8 +65,11 @@ def list_expenses(
     user_id: str,
     year: int | None = None,
     month: int | None = None,
+    household_id: str | None = None,
 ) -> list[Expense]:
-    query = _own_expense_query(user_id)
+    if household_id is not None:
+        assert_household_member(db, user_id, household_id)
+    query = _scoped_expense_query(user_id, household_id)
 
     if year is not None and month is not None:
         month_start = date(year, month, 1)
@@ -62,8 +87,11 @@ def create_expense(
     amount: Decimal,
     currency: str,
     spent_on: date,
+    household_id: str | None = None,
 ) -> Expense:
-    _assert_category_owned(db, user_id, category_id)
+    if household_id is not None:
+        assert_household_member(db, user_id, household_id)
+    _assert_category_accessible(db, user_id, category_id, household_id)
     expense = Expense(
         user_id=user_id,
         category_id=category_id,
@@ -71,6 +99,7 @@ def create_expense(
         amount=amount,
         currency=currency,
         spent_on=spent_on,
+        household_id=household_id,
     )
     db.add(expense)
     db.commit()
@@ -94,8 +123,11 @@ def create_installment_expenses(
     currency: str,
     spent_on: date,
     installment_total: int,
+    household_id: str | None = None,
 ) -> list[Expense]:
-    _assert_category_owned(db, user_id, category_id)
+    if household_id is not None:
+        assert_household_member(db, user_id, household_id)
+    _assert_category_accessible(db, user_id, category_id, household_id)
     group_id = str(uuid.uuid4())
     expenses = [
         Expense(
@@ -109,6 +141,7 @@ def create_installment_expenses(
             installment_index=index,
             installment_total=installment_total,
             original_description=description,
+            household_id=household_id,
         )
         for index in range(1, installment_total + 1)
     ]
@@ -116,7 +149,7 @@ def create_installment_expenses(
     db.commit()
     return list(
         db.execute(
-            _own_expense_query(user_id)
+            _scoped_expense_query(user_id, household_id)
             .where(Expense.installment_group_id == group_id)
             .order_by(Expense.installment_index)
         )
@@ -135,14 +168,10 @@ def update_expense(
     currency: str | None = None,
     spent_on: date | None = None,
 ) -> Expense:
-    expense = db.execute(
-        _own_expense_query(user_id).where(Expense.id == expense_id)
-    ).scalar_one_or_none()
-    if expense is None:
-        raise ExpenseNotFoundError(expense_id)
+    expense = _locate_expense(db, user_id, expense_id)
 
     if category_id is not None:
-        _assert_category_owned(db, user_id, category_id)
+        _assert_category_accessible(db, user_id, category_id, expense.household_id)
         expense.category_id = category_id
 
     for attr, value in [
@@ -164,17 +193,17 @@ def delete_expense(
     expense_id: str,
     scope: Literal["row", "group"] = "row",
 ) -> None:
-    expense = db.execute(
-        _own_expense_query(user_id).where(Expense.id == expense_id)
-    ).scalar_one_or_none()
-    if expense is None:
-        raise ExpenseNotFoundError(expense_id)
+    expense = _locate_expense(db, user_id, expense_id)
 
     if scope == "group" and expense.installment_group_id is not None:
+        household_clause = (
+            Expense.household_id.is_(None)
+            if expense.household_id is None
+            else Expense.household_id == expense.household_id
+        )
         db.execute(
             delete(Expense).where(
-                Expense.user_id == user_id,
-                Expense.household_id.is_(None),
+                household_clause,
                 Expense.installment_group_id == expense.installment_group_id,
             )
         )

@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.households import HouseholdAccessError
 from app.core.security import get_current_user_id
 from app.features.categories import service
 from app.features.categories.schemas import (
@@ -17,13 +18,19 @@ from app.features.categories.service import (
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
+_HOUSEHOLD_NOT_FOUND = HTTPException(status_code=404, detail="Household not found.")
+
 
 @router.get("", response_model=list[CategoryResponse])
 def list_categories(
+    household_id: str | None = Query(default=None),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[CategoryResponse]:
-    return service.list_categories(db, user_id)
+    try:
+        return service.list_categories(db, user_id, household_id=household_id)
+    except HouseholdAccessError:
+        raise _HOUSEHOLD_NOT_FOUND from None
 
 
 @router.post("", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
@@ -34,8 +41,15 @@ def create_category(
 ) -> CategoryResponse:
     try:
         return service.create_category(
-            db, user_id, body.name, body.color, body.expense_group
+            db,
+            user_id,
+            body.name,
+            body.color,
+            body.expense_group,
+            household_id=body.household_id,
         )
+    except HouseholdAccessError:
+        raise _HOUSEHOLD_NOT_FOUND from None
     except DuplicateCategoryNameError:
         raise HTTPException(
             status_code=409, detail="A category with that name already exists."

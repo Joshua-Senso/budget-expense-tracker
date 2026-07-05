@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
+from app.core.households import HouseholdAccessError
 from app.core.security import get_current_user_id
 from app.features.recurring import service
 from app.features.recurring.schemas import (
@@ -17,6 +18,7 @@ from app.features.recurring.service import (
 router = APIRouter(prefix="/recurring", tags=["recurring"])
 
 _MONTH_KEY_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
+_HOUSEHOLD_NOT_FOUND = HTTPException(status_code=404, detail="Household not found.")
 
 
 def _parse_month_key(month_key: str) -> tuple[int, int]:
@@ -26,10 +28,14 @@ def _parse_month_key(month_key: str) -> tuple[int, int]:
 
 @router.get("", response_model=list[RecurringExpenseResponse])
 def list_recurring_expenses(
+    household_id: str | None = Query(default=None),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[RecurringExpenseResponse]:
-    return service.list_recurring_expenses(db, user_id)
+    try:
+        return service.list_recurring_expenses(db, user_id, household_id=household_id)
+    except HouseholdAccessError:
+        raise _HOUSEHOLD_NOT_FOUND from None
 
 
 @router.post(
@@ -50,7 +56,10 @@ def create_recurring_expense(
             body.currency,
             body.start_on,
             body.end_on,
+            household_id=body.household_id,
         )
+    except HouseholdAccessError:
+        raise _HOUSEHOLD_NOT_FOUND from None
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
 
@@ -58,11 +67,17 @@ def create_recurring_expense(
 @router.get("/projection/{month_key}", response_model=list[ProjectedExpense])
 def get_monthly_projection(
     month_key: str = Path(pattern=_MONTH_KEY_PATTERN),
+    household_id: str | None = Query(default=None),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[ProjectedExpense]:
     year, month = _parse_month_key(month_key)
-    return service.project_month(db, user_id, year, month)
+    try:
+        return service.project_month(
+            db, user_id, year, month, household_id=household_id
+        )
+    except HouseholdAccessError:
+        raise _HOUSEHOLD_NOT_FOUND from None
 
 
 @router.delete("/{recurring_id}/{month_key}", status_code=status.HTTP_204_NO_CONTENT)

@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.core.households import HouseholdAccessError
 from app.features.categories.models import UserCategory
 from app.features.categories.service import (
     CategoryNotFoundError,
@@ -109,7 +110,7 @@ def test_create_category_non_unique_integrity_error_reraises() -> None:
 def test_update_category_happy_path() -> None:
     db = _mock_db()
     cat = _make_category(name="Food", color="#FF0000", expense_group="card")
-    db.execute.return_value.scalar_one_or_none.return_value = cat
+    db.get.return_value = cat
 
     result = update_category(db, "user-1", "cat-1", name="Groceries")
 
@@ -120,7 +121,7 @@ def test_update_category_happy_path() -> None:
 
 def test_update_category_not_found_raises() -> None:
     db = _mock_db()
-    db.execute.return_value.scalar_one_or_none.return_value = None
+    db.get.return_value = None
 
     with pytest.raises(CategoryNotFoundError):
         update_category(db, "user-1", "missing-id", name="Groceries")
@@ -129,7 +130,7 @@ def test_update_category_not_found_raises() -> None:
 def test_update_category_duplicate_name_raises() -> None:
     db = _mock_db()
     cat = _make_category()
-    db.execute.return_value.scalar_one_or_none.return_value = cat
+    db.get.return_value = cat
     db.commit.side_effect = _integrity_error("23505")
 
     with pytest.raises(DuplicateCategoryNameError):
@@ -141,7 +142,7 @@ def test_update_category_duplicate_name_raises() -> None:
 def test_update_category_no_fields_is_noop() -> None:
     db = _mock_db()
     cat = _make_category(name="Food", color="#FF0000", expense_group="card")
-    db.execute.return_value.scalar_one_or_none.return_value = cat
+    db.get.return_value = cat
 
     result = update_category(db, "user-1", "cat-1")
 
@@ -157,6 +158,7 @@ def test_delete_category_happy_path() -> None:
     db = _mock_db()
     cat1 = _make_category(id="cat-1", name="Food")
     cat2 = _make_category(id="cat-2", name="Transport")
+    db.get.return_value = cat1
     db.execute.return_value.scalars.return_value.all.return_value = [cat1, cat2]
 
     delete_category(db, "user-1", "cat-1")
@@ -167,7 +169,7 @@ def test_delete_category_happy_path() -> None:
 
 def test_delete_category_not_found_raises() -> None:
     db = _mock_db()
-    db.execute.return_value.scalars.return_value.all.return_value = []
+    db.get.return_value = None
 
     with pytest.raises(CategoryNotFoundError):
         delete_category(db, "user-1", "missing-id")
@@ -176,9 +178,79 @@ def test_delete_category_not_found_raises() -> None:
 def test_delete_last_category_raises() -> None:
     db = _mock_db()
     cat = _make_category(id="cat-1", name="Food")
+    db.get.return_value = cat
     db.execute.return_value.scalars.return_value.all.return_value = [cat]
 
     with pytest.raises(LastCategoryError):
         delete_category(db, "user-1", "cat-1")
 
     db.delete.assert_not_called()
+
+
+# --- household scoping ---
+
+
+def test_list_categories_household_scope_requires_membership() -> None:
+    db = _mock_db()
+    db.scalar.return_value = None  # not a member
+
+    with pytest.raises(HouseholdAccessError):
+        list_categories(db, "user-1", household_id="household-1")
+
+
+def test_list_categories_household_scope_returns_shared_rows() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "member-1"
+    shared = [_make_category(household_id="household-1", user_id="user-2")]
+    db.execute.return_value.scalars.return_value.all.return_value = shared
+
+    result = list_categories(db, "user-1", household_id="household-1")
+
+    assert result == shared
+
+
+def test_create_category_household_scope_requires_membership() -> None:
+    db = _mock_db()
+    db.scalar.return_value = None  # not a member
+
+    with pytest.raises(HouseholdAccessError):
+        create_category(
+            db, "user-1", "Food", "#FF0000", "card", household_id="household-1"
+        )
+
+    db.add.assert_not_called()
+
+
+def test_create_category_household_scope_happy_path() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "member-1"
+
+    result = create_category(
+        db, "user-1", "Food", "#FF0000", "card", household_id="household-1"
+    )
+
+    assert result.household_id == "household-1"
+    db.add.assert_called_once()
+    db.commit.assert_called_once()
+
+
+def test_update_category_shared_row_accessible_to_household_member() -> None:
+    db = _mock_db()
+    cat = _make_category(household_id="household-1", user_id="user-2")
+    db.get.return_value = cat
+    db.scalar.return_value = "member-1"  # requester is a member of household-1
+
+    result = update_category(db, "user-1", "cat-1", name="Groceries")
+
+    assert result.name == "Groceries"
+    db.commit.assert_called_once()
+
+
+def test_update_category_shared_row_inaccessible_to_non_member() -> None:
+    db = _mock_db()
+    cat = _make_category(household_id="household-1", user_id="user-2")
+    db.get.return_value = cat
+    db.scalar.return_value = None  # requester is not a member
+
+    with pytest.raises(CategoryNotFoundError):
+        update_category(db, "user-1", "cat-1", name="Groceries")

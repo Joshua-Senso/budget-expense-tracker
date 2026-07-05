@@ -6,6 +6,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.households import assert_household_member, is_household_member
 from app.features.categories.models import UserCategory
 from app.features.expenses.models import Expense
 from app.features.recurring.models import RecurringExpense
@@ -20,28 +21,52 @@ class CategoryOwnershipError(Exception):
     pass
 
 
-def _own_recurring_query(user_id: str):
+def _scoped_recurring_query(user_id: str, household_id: str | None):
+    if household_id is not None:
+        return select(RecurringExpense).where(
+            RecurringExpense.household_id == household_id
+        )
     return select(RecurringExpense).where(
         RecurringExpense.user_id == user_id,
         RecurringExpense.household_id.is_(None),
     )
 
 
-def _is_category_owned(db: Session, user_id: str, category_id: str) -> bool:
+def _locate_recurring(db: Session, user_id: str, recurring_id: str) -> RecurringExpense:
+    recurring = db.get(RecurringExpense, recurring_id)
+    if recurring is None:
+        raise RecurringExpenseNotFoundError(recurring_id)
+    if recurring.household_id is None:
+        if recurring.user_id != user_id:
+            raise RecurringExpenseNotFoundError(recurring_id)
+    elif not is_household_member(db, user_id, recurring.household_id):
+        raise RecurringExpenseNotFoundError(recurring_id)
+    return recurring
+
+
+def _is_category_accessible(
+    db: Session, user_id: str, category_id: str, household_id: str | None
+) -> bool:
+    conditions = [
+        UserCategory.household_id.is_(None) & (UserCategory.user_id == user_id)
+    ]
+    if household_id is not None:
+        conditions.append(UserCategory.household_id == household_id)
     return (
         db.scalar(
             select(UserCategory.id).where(
                 UserCategory.id == category_id,
-                UserCategory.user_id == user_id,
-                UserCategory.household_id.is_(None),
+                or_(*conditions),
             )
         )
         is not None
     )
 
 
-def _assert_category_owned(db: Session, user_id: str, category_id: str) -> None:
-    if not _is_category_owned(db, user_id, category_id):
+def _assert_category_accessible(
+    db: Session, user_id: str, category_id: str, household_id: str | None
+) -> None:
+    if not _is_category_accessible(db, user_id, category_id, household_id):
         raise CategoryOwnershipError(category_id)
 
 
@@ -49,10 +74,16 @@ def _month_bounds(year: int, month: int) -> tuple[date, date]:
     return date(year, month, 1), date(year, month, monthrange(year, month)[1])
 
 
-def list_recurring_expenses(db: Session, user_id: str) -> list[RecurringExpense]:
+def list_recurring_expenses(
+    db: Session, user_id: str, household_id: str | None = None
+) -> list[RecurringExpense]:
+    if household_id is not None:
+        assert_household_member(db, user_id, household_id)
     return list(
         db.execute(
-            _own_recurring_query(user_id).order_by(RecurringExpense.start_on.desc())
+            _scoped_recurring_query(user_id, household_id).order_by(
+                RecurringExpense.start_on.desc()
+            )
         )
         .scalars()
         .all()
@@ -68,8 +99,11 @@ def create_recurring_expense(
     currency: str,
     start_on: date,
     end_on: date | None = None,
+    household_id: str | None = None,
 ) -> RecurringExpense:
-    _assert_category_owned(db, user_id, category_id)
+    if household_id is not None:
+        assert_household_member(db, user_id, household_id)
+    _assert_category_accessible(db, user_id, category_id, household_id)
     recurring = RecurringExpense(
         user_id=user_id,
         category_id=category_id,
@@ -78,6 +112,7 @@ def create_recurring_expense(
         currency=currency,
         start_on=start_on,
         end_on=end_on,
+        household_id=household_id,
     )
     db.add(recurring)
     db.commit()
@@ -97,11 +132,7 @@ def deactivate_recurring_expense(
     projected, while occurrences already projected for that month and earlier
     remain unaffected (PRD 7.3).
     """
-    recurring = db.execute(
-        _own_recurring_query(user_id).where(RecurringExpense.id == recurring_id)
-    ).scalar_one_or_none()
-    if recurring is None:
-        raise RecurringExpenseNotFoundError(recurring_id)
+    recurring = _locate_recurring(db, user_id, recurring_id)
 
     _, month_end = _month_bounds(year, month)
     if recurring.end_on is None or month_end < recurring.end_on:
@@ -118,12 +149,18 @@ def _occurrence_date(start_on: date, year: int, month: int) -> date:
 
 
 def project_month(
-    db: Session, user_id: str, year: int, month: int
+    db: Session,
+    user_id: str,
+    year: int,
+    month: int,
+    household_id: str | None = None,
 ) -> list[ProjectedExpense]:
+    if household_id is not None:
+        assert_household_member(db, user_id, household_id)
     month_start, month_end = _month_bounds(year, month)
     rules = (
         db.execute(
-            _own_recurring_query(user_id).where(
+            _scoped_recurring_query(user_id, household_id).where(
                 RecurringExpense.is_active.is_(True),
                 RecurringExpense.start_on <= month_end,
                 or_(
@@ -158,16 +195,16 @@ def generate_recurring_expenses(db: Session, year: int, month: int) -> int:
     existence check, and each insert runs in its own SAVEPOINT so a race
     between two concurrent runs (both passing the pre-check before either
     commits) surfaces as a caught IntegrityError, not a failed job. Runs
-    across all users/rules — this is worker-internal, not a user-scoped API
-    call, so a rule whose category is no longer owned is skipped rather than
-    raising and aborting the rest of the batch.
+    across all users/rules (personal and household-scoped alike) — this is
+    worker-internal, not a user-scoped API call, so a rule whose category is
+    no longer accessible is skipped rather than raising and aborting the rest
+    of the batch.
     """
     month_start, month_end = _month_bounds(year, month)
     rules = (
         db.execute(
             select(RecurringExpense).where(
                 RecurringExpense.is_active.is_(True),
-                RecurringExpense.household_id.is_(None),
                 RecurringExpense.start_on <= month_end,
                 or_(
                     RecurringExpense.end_on.is_(None),
@@ -187,7 +224,9 @@ def generate_recurring_expenses(db: Session, year: int, month: int) -> int:
         ):
             continue
 
-        if not _is_category_owned(db, rule.user_id, rule.category_id):
+        if not _is_category_accessible(
+            db, rule.user_id, rule.category_id, rule.household_id
+        ):
             continue
 
         exists = db.scalar(
@@ -207,6 +246,7 @@ def generate_recurring_expenses(db: Session, year: int, month: int) -> int:
                         category_id=rule.category_id,
                         description=rule.description,
                         amount=rule.amount,
+                        household_id=rule.household_id,
                         currency=rule.currency,
                         spent_on=spent_on,
                         recurring_expense_id=rule.id,

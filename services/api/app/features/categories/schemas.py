@@ -25,6 +25,7 @@ class CategoryCreate(BaseModel):
     name: str
     color: str
     expense_group: Literal["card", "other"]
+    household_id: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -56,6 +57,7 @@ class CategoryUpdate(BaseModel):
 class CategoryResponse(BaseModel):
     id: str
     user_id: str
+    household_id: str | None
     name: str
     color: str
     expense_group: str

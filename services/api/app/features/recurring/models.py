@@ -11,6 +11,7 @@ from sqlalchemy import (
     Numeric,
     String,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -59,4 +60,10 @@ class RecurringExpense(Base):
             name="ck_recurring_expenses_end_on_after_start",
         ),
         Index("ix_recurring_expenses_user_active", "user_id", "is_active"),
+        Index(
+            "ix_recurring_expenses_household_active",
+            "household_id",
+            "is_active",
+            postgresql_where=text("household_id IS NOT NULL"),
+        ),
     )
