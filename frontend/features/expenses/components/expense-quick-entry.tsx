@@ -19,10 +19,10 @@ function ExpenseQuickEntry() {
               Expense entry
             </p>
             <h2 className="mt-1 text-xl font-semibold tracking-tight">
-              Log a one-time expense
+              Log an expense
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Add the date, amount, type, and category in one short form.
+              One-time, installment, or recurring — add it in one short form.
             </p>
           </div>
           <Button onClick={() => setOpen(true)} className="gap-1.5 sm:self-end">

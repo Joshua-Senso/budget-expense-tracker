@@ -9,24 +9,34 @@ function isValidDate(value: string) {
   return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(value)
 }
 
+const amountSchema = z
+  .number({ error: "Amount is required" })
+  .positive("Amount must be positive")
+  .max(maxAmount, "Amount is too large")
+  .refine((value) => Number(value.toFixed(2)) === value, {
+    message: "Use no more than 2 decimal places",
+  })
+
+const currencySchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z]{3}$/, "Use a 3-letter currency code")
+
+const isoDateSchema = z
+  .string()
+  .regex(dateRegex, "Use YYYY-MM-DD")
+  .refine(isValidDate, "Enter a valid date")
+
+function isValidIsoDate(value: string | undefined): value is string {
+  return value != null && isoDateSchema.safeParse(value).success
+}
+
 export const expenseSchema = z.object({
   description: z.string().trim().min(1, "Description is required"),
-  amount: z
-    .number({ error: "Amount is required" })
-    .positive("Amount must be positive")
-    .max(maxAmount, "Amount is too large")
-    .refine((value) => Number(value.toFixed(2)) === value, {
-      message: "Use no more than 2 decimal places",
-    }),
-  currency: z
-    .string()
-    .trim()
-    .toUpperCase()
-    .regex(/^[A-Z]{3}$/, "Use a 3-letter currency code"),
-  spent_on: z
-    .string()
-    .regex(dateRegex, "Use YYYY-MM-DD")
-    .refine(isValidDate, "Enter a valid date"),
+  amount: amountSchema,
+  currency: currencySchema,
+  spent_on: isoDateSchema,
   expense_group: z.enum(["card", "other"]),
   category_id: z.string().trim().min(1, "Category is required"),
 })
@@ -39,8 +49,14 @@ export type Expense = Omit<ExpensePayload, "amount"> & {
   id: string
   user_id: string
   amount: string
+  installment_group_id: string | null
+  installment_index: number | null
+  installment_total: number | null
+  original_description: string | null
+  recurring_expense_id: string | null
   created_at: string
   updated_at: string
+  isProjected?: boolean
 }
 
 export function toExpensePayload(values: ExpenseFormValues): ExpensePayload {
@@ -52,3 +68,62 @@ export function toExpensePayload(values: ExpenseFormValues): ExpensePayload {
     category_id: values.category_id,
   }
 }
+
+export const expenseTypeSchema = z.enum(["one_time", "installment", "recurring"])
+
+export type ExpenseType = z.infer<typeof expenseTypeSchema>
+
+export const createExpenseSchema = z
+  .object({
+    expense_type: expenseTypeSchema,
+    description: z.string().trim().min(1, "Description is required"),
+    amount: amountSchema,
+    currency: currencySchema,
+    expense_group: z.enum(["card", "other"]),
+    category_id: z.string().trim().min(1, "Category is required"),
+    spent_on: z.string().optional(),
+    installment_total: z.number().optional(),
+    start_on: z.string().optional(),
+    end_on: z.string().optional(),
+  })
+  .superRefine((values, ctx) => {
+    if (values.expense_type !== "recurring" && !isValidIsoDate(values.spent_on)) {
+      ctx.addIssue({ code: "custom", path: ["spent_on"], message: "Enter a valid date" })
+    }
+
+    if (values.expense_type === "installment") {
+      if (
+        values.installment_total == null ||
+        !Number.isInteger(values.installment_total) ||
+        values.installment_total < 2 ||
+        values.installment_total > 60
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["installment_total"],
+          message: "Choose between 2 and 60 installments",
+        })
+      }
+    }
+
+    if (values.expense_type === "recurring") {
+      if (!isValidIsoDate(values.start_on)) {
+        ctx.addIssue({ code: "custom", path: ["start_on"], message: "Enter a valid date" })
+      }
+      if (values.end_on) {
+        if (!isValidIsoDate(values.end_on)) {
+          ctx.addIssue({ code: "custom", path: ["end_on"], message: "Enter a valid date" })
+        } else if (values.start_on && values.end_on < values.start_on) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["end_on"],
+            message: "End date must be on or after the start date",
+          })
+        }
+      }
+    }
+  })
+
+export type CreateExpenseFormValues = z.infer<typeof createExpenseSchema>
+
+export type InstallmentCreatePayload = ExpensePayload & { installment_total: number }
