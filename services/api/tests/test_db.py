@@ -24,6 +24,12 @@ def test_postgres_url_uses_installed_psycopg_driver() -> None:
         auth_jwks_url="http://localhost:4000/api/auth/jwks",
         auth_jwt_issuer="http://localhost:4000",
         auth_jwt_audience="expense-api",
+        frontend_origin="http://localhost:3000",
+        s3_endpoint_url="http://localhost:9000",
+        s3_region="auto",
+        s3_access_key_id="minioadmin",
+        s3_secret_access_key="minioadmin",
+        receipts_bucket="receipts",
     )
 
     assert settings.sqlalchemy_database_url.startswith("postgresql+psycopg://")

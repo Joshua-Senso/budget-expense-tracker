@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     auth_jwt_issuer: str
     auth_jwt_audience: str
     frontend_origin: str
+    s3_endpoint_url: str
+    s3_region: str
+    s3_access_key_id: str
+    s3_secret_access_key: str
+    receipts_bucket: str
 
     @computed_field
     @property

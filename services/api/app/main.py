@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.core.security import get_current_user_id
+from app.features.attachments.router import router as attachments_router
 from app.features.budget.router import router as budget_router
 from app.features.categories.router import router as categories_router
 from app.features.dashboard.router import router as dashboard_router
@@ -22,6 +23,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(categories_router)
     app.include_router(expenses_router)
+    app.include_router(attachments_router)
     app.include_router(budget_router)
     app.include_router(dashboard_router)
     app.include_router(recurring_router)
