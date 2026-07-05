@@ -47,16 +47,20 @@ def _locate_recurring(db: Session, user_id: str, recurring_id: str) -> Recurring
 def _is_category_accessible(
     db: Session, user_id: str, category_id: str, household_id: str | None
 ) -> bool:
-    conditions = [
-        UserCategory.household_id.is_(None) & (UserCategory.user_id == user_id)
-    ]
+    # A household-scoped rule may only reference a category shared in that
+    # same household -- not the creator's personal category, which other
+    # household members have no way to resolve when they list the shared rule.
     if household_id is not None:
-        conditions.append(UserCategory.household_id == household_id)
+        condition = UserCategory.household_id == household_id
+    else:
+        condition = UserCategory.household_id.is_(None) & (
+            UserCategory.user_id == user_id
+        )
     return (
         db.scalar(
             select(UserCategory.id).where(
                 UserCategory.id == category_id,
-                or_(*conditions),
+                condition,
             )
         )
         is not None

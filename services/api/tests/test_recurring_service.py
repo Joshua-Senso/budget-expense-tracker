@@ -403,6 +403,30 @@ def test_create_recurring_expense_household_scope_happy_path() -> None:
     db.commit.assert_called_once()
 
 
+def test_create_recurring_expense_household_scope_category_check_excludes_personal_fallback() -> (
+    None
+):
+    """Regression: a household-scoped rule must not accept the creator's
+    personal category -- other household members can't resolve it when they
+    list the shared rule (Greptile P1 on PR #106)."""
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+
+    create_recurring_expense(
+        db,
+        "user-1",
+        "cat-1",
+        "Netflix",
+        Decimal("500"),
+        "PHP",
+        date(2026, 1, 15),
+        household_id="household-1",
+    )
+
+    category_check_query = db.scalar.call_args_list[-1][0][0]
+    assert "user_id" not in str(category_check_query)
+
+
 def test_deactivate_recurring_expense_shared_row_accessible_to_household_member() -> (
     None
 ):

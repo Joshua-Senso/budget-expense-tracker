@@ -279,6 +279,38 @@ def test_delete_expense_group_scope_bulk_deletes_group_rows() -> None:
     db.commit.assert_called_once()
 
 
+def test_delete_expense_group_scope_personal_rows_scoped_to_owner() -> None:
+    """Regression: a personal group-delete must stay scoped to (user_id,
+    household_id IS NULL), not household_id IS NULL alone -- otherwise a
+    group-id collision (or a legacy row) could delete another user's
+    installments too (Greptile P1 on PR #106)."""
+    db = _mock_db()
+    exp = _make_expense(installment_group_id="grp-1")
+    db.get.return_value = exp
+
+    delete_expense(db, "user-1", "exp-1", scope="group")
+
+    bulk_delete_stmt = db.execute.call_args_list[0][0][0]
+    assert "expenses.user_id" in str(bulk_delete_stmt)
+
+
+def test_delete_expense_group_scope_household_rows_not_scoped_to_deleter() -> None:
+    """A shared group-delete is scoped by household, not by which member
+    triggered it -- every row in the group carries the same household_id."""
+    db = _mock_db()
+    exp = _make_expense(
+        installment_group_id="grp-1", household_id="household-1", user_id="user-2"
+    )
+    db.get.return_value = exp
+    db.scalar.return_value = "member-1"  # requester is a member of household-1
+
+    delete_expense(db, "user-1", "exp-1", scope="group")
+
+    bulk_delete_stmt = db.execute.call_args_list[0][0][0]
+    assert "expenses.household_id" in str(bulk_delete_stmt)
+    assert "expenses.user_id" not in str(bulk_delete_stmt)
+
+
 def test_delete_expense_row_scope_ignores_installment_group() -> None:
     db = _mock_db()
     exp = _make_expense(installment_group_id="grp-1")
@@ -369,6 +401,30 @@ def test_create_expense_household_scope_rejects_category_from_other_household() 
         )
 
     db.add.assert_not_called()
+
+
+def test_create_expense_household_scope_category_check_excludes_personal_fallback() -> (
+    None
+):
+    """Regression: a household-scoped expense must not accept the creator's
+    personal category -- other household members can't resolve it when they
+    list the shared row (Greptile P1 on PR #106)."""
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+
+    create_expense(
+        db,
+        "user-1",
+        "cat-1",
+        "Lunch",
+        Decimal("150"),
+        "PHP",
+        date(2026, 7, 1),
+        household_id="household-1",
+    )
+
+    category_check_query = db.scalar.call_args_list[-1][0][0]
+    assert "user_id" not in str(category_check_query)
 
 
 def test_update_expense_shared_row_accessible_to_household_member() -> None:

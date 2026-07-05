@@ -4,7 +4,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.households import assert_household_member, is_household_member
@@ -44,16 +44,20 @@ def _locate_expense(db: Session, user_id: str, expense_id: str) -> Expense:
 def _assert_category_accessible(
     db: Session, user_id: str, category_id: str, household_id: str | None
 ) -> None:
-    conditions = [
-        UserCategory.household_id.is_(None) & (UserCategory.user_id == user_id)
-    ]
+    # A household-scoped row may only reference a category shared in that same
+    # household -- not the creator's personal category, which other household
+    # members have no way to resolve when they list the shared row.
     if household_id is not None:
-        conditions.append(UserCategory.household_id == household_id)
+        condition = UserCategory.household_id == household_id
+    else:
+        condition = UserCategory.household_id.is_(None) & (
+            UserCategory.user_id == user_id
+        )
 
     accessible = db.scalar(
         select(UserCategory.id).where(
             UserCategory.id == category_id,
-            or_(*conditions),
+            condition,
         )
     )
     if accessible is None:
@@ -196,14 +200,17 @@ def delete_expense(
     expense = _locate_expense(db, user_id, expense_id)
 
     if scope == "group" and expense.installment_group_id is not None:
-        household_clause = (
-            Expense.household_id.is_(None)
+        # A personal group is scoped to (user_id, household_id IS NULL), not
+        # household_id IS NULL alone -- otherwise a group-id collision (or a
+        # legacy row) could let one user's delete remove another user's rows.
+        scope_clauses = (
+            (Expense.user_id == user_id, Expense.household_id.is_(None))
             if expense.household_id is None
-            else Expense.household_id == expense.household_id
+            else (Expense.household_id == expense.household_id,)
         )
         db.execute(
             delete(Expense).where(
-                household_clause,
+                *scope_clauses,
                 Expense.installment_group_id == expense.installment_group_id,
             )
         )
