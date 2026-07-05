@@ -3,9 +3,11 @@ from datetime import date
 from decimal import Decimal
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.features.categories.models import UserCategory
+from app.features.expenses.models import Expense
 from app.features.recurring.models import RecurringExpense
 from app.features.recurring.schemas import ProjectedExpense
 
@@ -25,15 +27,21 @@ def _own_recurring_query(user_id: str):
     )
 
 
-def _assert_category_owned(db: Session, user_id: str, category_id: str) -> None:
-    owned = db.scalar(
-        select(UserCategory.id).where(
-            UserCategory.id == category_id,
-            UserCategory.user_id == user_id,
-            UserCategory.household_id.is_(None),
+def _is_category_owned(db: Session, user_id: str, category_id: str) -> bool:
+    return (
+        db.scalar(
+            select(UserCategory.id).where(
+                UserCategory.id == category_id,
+                UserCategory.user_id == user_id,
+                UserCategory.household_id.is_(None),
+            )
         )
+        is not None
     )
-    if owned is None:
+
+
+def _assert_category_owned(db: Session, user_id: str, category_id: str) -> None:
+    if not _is_category_owned(db, user_id, category_id):
         raise CategoryOwnershipError(category_id)
 
 
@@ -140,3 +148,73 @@ def project_month(
         if (spent_on := _occurrence_date(rule.start_on, year, month)) >= rule.start_on
         and (rule.end_on is None or spent_on <= rule.end_on)
     ]
+
+
+def generate_recurring_expenses(db: Session, year: int, month: int) -> int:
+    """Persist one Expense row per active recurring rule due in a given month.
+
+    Idempotent: a (recurring_expense_id, spent_on) unique index backs the
+    existence check, and each insert runs in its own SAVEPOINT so a race
+    between two concurrent runs (both passing the pre-check before either
+    commits) surfaces as a caught IntegrityError, not a failed job. Runs
+    across all users/rules — this is worker-internal, not a user-scoped API
+    call, so a rule whose category is no longer owned is skipped rather than
+    raising and aborting the rest of the batch.
+    """
+    month_start, month_end = _month_bounds(year, month)
+    rules = (
+        db.execute(
+            select(RecurringExpense).where(
+                RecurringExpense.is_active.is_(True),
+                RecurringExpense.household_id.is_(None),
+                RecurringExpense.start_on <= month_end,
+                or_(
+                    RecurringExpense.end_on.is_(None),
+                    RecurringExpense.end_on >= month_start,
+                ),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    created = 0
+    for rule in rules:
+        spent_on = _occurrence_date(rule.start_on, year, month)
+        if spent_on < rule.start_on or (
+            rule.end_on is not None and spent_on > rule.end_on
+        ):
+            continue
+
+        if not _is_category_owned(db, rule.user_id, rule.category_id):
+            continue
+
+        exists = db.scalar(
+            select(Expense.id).where(
+                Expense.recurring_expense_id == rule.id,
+                Expense.spent_on == spent_on,
+            )
+        )
+        if exists is not None:
+            continue
+
+        try:
+            with db.begin_nested():
+                db.add(
+                    Expense(
+                        user_id=rule.user_id,
+                        category_id=rule.category_id,
+                        description=rule.description,
+                        amount=rule.amount,
+                        currency=rule.currency,
+                        spent_on=spent_on,
+                        recurring_expense_id=rule.id,
+                    )
+                )
+                db.flush()
+        except IntegrityError:
+            continue
+        created += 1
+
+    db.commit()
+    return created

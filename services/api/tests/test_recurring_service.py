@@ -3,6 +3,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.features.recurring.models import RecurringExpense
 from app.features.recurring.service import (
@@ -10,6 +11,7 @@ from app.features.recurring.service import (
     RecurringExpenseNotFoundError,
     create_recurring_expense,
     deactivate_recurring_expense,
+    generate_recurring_expenses,
     list_recurring_expenses,
     project_month,
 )
@@ -200,3 +202,111 @@ def test_deactivate_recurring_expense_not_found_raises() -> None:
 
     with pytest.raises(RecurringExpenseNotFoundError):
         deactivate_recurring_expense(db, "user-1", "missing", 2026, 7)
+
+
+# --- generate_recurring_expenses ---
+
+
+def test_generate_recurring_expenses_creates_row_for_due_rule() -> None:
+    db = _mock_db()
+    rule = _make_rule(start_on=date(2026, 1, 15))
+    db.execute.return_value.scalars.return_value.all.return_value = [rule]
+    db.scalar.side_effect = ["cat-1", None]  # category owned, then no existing row
+
+    created = generate_recurring_expenses(db, 2026, 7)
+
+    assert created == 1
+    db.add.assert_called_once()
+    added = db.add.call_args[0][0]
+    assert added.recurring_expense_id == "rec-1"
+    assert added.spent_on == date(2026, 7, 15)
+    assert added.amount == Decimal("500.00")
+    db.commit.assert_called_once()
+
+
+def test_generate_recurring_expenses_is_idempotent() -> None:
+    """A row already generated for (recurring_expense_id, spent_on) is skipped."""
+    db = _mock_db()
+    rule = _make_rule(start_on=date(2026, 1, 15))
+    db.execute.return_value.scalars.return_value.all.return_value = [rule]
+    db.scalar.side_effect = ["cat-1", "existing-expense-id"]
+
+    created = generate_recurring_expenses(db, 2026, 7)
+
+    assert created == 0
+    db.add.assert_not_called()
+
+
+def test_generate_recurring_expenses_skips_rule_with_unowned_category() -> None:
+    """A rule whose category was since deleted/reassigned is skipped, not raised.
+
+    Regression guard: the worker runs across all users, so one rule with a
+    stale category must not raise and abort the rest of the batch.
+    """
+    db = _mock_db()
+    rule = _make_rule(start_on=date(2026, 1, 15))
+    db.execute.return_value.scalars.return_value.all.return_value = [rule]
+    db.scalar.return_value = None  # category no longer owned
+
+    created = generate_recurring_expenses(db, 2026, 7)
+
+    assert created == 0
+    db.add.assert_not_called()
+    db.commit.assert_called_once()
+
+
+def test_generate_recurring_expenses_swallows_race_on_unique_index() -> None:
+    """Two concurrent runs can both pass the pre-check before either commits.
+
+    The resulting IntegrityError on the losing insert must be caught (via the
+    SAVEPOINT) and treated as an idempotent skip, not bubble up and fail the
+    whole job.
+    """
+    db = _mock_db()
+    rule = _make_rule(start_on=date(2026, 1, 15))
+    db.execute.return_value.scalars.return_value.all.return_value = [rule]
+    db.scalar.side_effect = ["cat-1", None]  # owned, and pre-check sees no row yet
+    db.flush.side_effect = IntegrityError("insert", {}, Exception("dup key"))
+
+    created = generate_recurring_expenses(db, 2026, 7)
+
+    assert created == 0
+    db.commit.assert_called_once()
+
+
+def test_generate_recurring_expenses_skips_occurrence_past_end_on() -> None:
+    db = _mock_db()
+    rule = _make_rule(start_on=date(2026, 1, 31), end_on=date(2026, 4, 15))
+    db.execute.return_value.scalars.return_value.all.return_value = [rule]
+
+    created = generate_recurring_expenses(db, 2026, 4)
+
+    assert created == 0
+    db.add.assert_not_called()
+
+
+def test_generate_recurring_expenses_only_queries_active_rules() -> None:
+    db = _mock_db()
+    db.execute.return_value.scalars.return_value.all.return_value = []
+
+    generate_recurring_expenses(db, 2026, 7)
+
+    executed_query = db.execute.call_args[0][0]
+    assert "is_active" in str(executed_query)
+
+
+def test_generate_recurring_expenses_handles_mixed_rules() -> None:
+    db = _mock_db()
+    due_rule = _make_rule(id="rec-1", start_on=date(2026, 1, 15))
+    existing_rule = _make_rule(id="rec-2", start_on=date(2026, 1, 20))
+    db.execute.return_value.scalars.return_value.all.return_value = [
+        due_rule,
+        existing_rule,
+    ]
+    db.scalar.side_effect = ["cat-1", None, "cat-1", "already-generated"]
+
+    created = generate_recurring_expenses(db, 2026, 7)
+
+    assert created == 1
+    db.add.assert_called_once()
+    assert db.add.call_args[0][0].recurring_expense_id == "rec-1"
