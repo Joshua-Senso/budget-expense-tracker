@@ -24,26 +24,52 @@ type ImportErrorDisplay =
   | { kind: "message"; message: string }
   | { kind: "rows"; errors: ImportRowError[] }
 
+const fallbackMessage = "Could not import this file. Please try again."
+
 function getErrorDetail(err: ApiError) {
   return typeof err.body === "object" && err.body !== null && "detail" in err.body
     ? (err.body as { detail?: unknown }).detail
     : null
 }
 
+function isImportRowError(value: unknown): value is ImportRowError {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { row?: unknown }).row === "number" &&
+    Array.isArray((value as { messages?: unknown }).messages) &&
+    (value as { messages: unknown[] }).messages.every((message) => typeof message === "string")
+  )
+}
+
+function messageFromDetailItem(item: unknown): string {
+  if (typeof item === "string") {
+    return item
+  }
+
+  if (typeof item === "object" && item !== null && typeof (item as { msg?: unknown }).msg === "string") {
+    return (item as { msg: string }).msg
+  }
+
+  return fallbackMessage
+}
+
 function getImportErrorDisplay(err: unknown): ImportErrorDisplay {
   if (err instanceof ApiError) {
     const detail = getErrorDetail(err)
 
-    if (err.status === 422 && Array.isArray(detail)) {
-      return { kind: "rows", errors: detail as ImportRowError[] }
+    if (Array.isArray(detail) && detail.length > 0) {
+      return detail.every(isImportRowError)
+        ? { kind: "rows", errors: detail }
+        : { kind: "message", message: detail.map(messageFromDetailItem).join(" ") }
     }
 
-    if (err.status === 400 && typeof detail === "string") {
+    if (typeof detail === "string") {
       return { kind: "message", message: detail }
     }
   }
 
-  return { kind: "message", message: "Could not import this file. Please try again." }
+  return { kind: "message", message: fallbackMessage }
 }
 
 interface ImportDialogProps {
