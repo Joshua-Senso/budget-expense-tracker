@@ -3,31 +3,61 @@
 import { useMemo, useState } from "react"
 import { PencilIcon, Trash2Icon } from "lucide-react"
 
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { CategoryColor, useCategories } from "@/features/categories"
 import type { Category } from "@/features/categories"
-import { ApiError } from "@/lib/api-client"
+import { useRecurringProjection } from "@/features/recurring"
 import {
   formatCurrency,
   formatExpenseDate,
   formatMonthLabel,
 } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import { useMonthStore } from "@/stores/month-store"
 
 import { useDeleteExpense } from "../api/mutations"
 import { useExpenses } from "../api/queries"
 import { useExpenseFilterStore } from "../store"
+import { ExpenseActionDialog, getDeleteErrorMessage } from "./expense-action-dialog"
 import { ExpenseFilterBar } from "./expense-filter-bar"
 import { ExpenseFormDialog } from "./expense-form-dialog"
 import type { Expense } from "../schemas"
 import type { ExpenseFilter } from "../store"
 
-function getDeleteErrorMessage(err: unknown) {
-  if (err instanceof ApiError && err.status === 404) {
-    return "This expense no longer exists. Refresh the page and try again."
-  }
+function mergeProjectedExpenses(
+  persisted: Expense[],
+  projected: ReturnType<typeof useRecurringProjection>["data"],
+): Expense[] {
+  const persistedKeys = new Set(
+    persisted
+      .filter((expense) => expense.recurring_expense_id)
+      .map((expense) => `${expense.recurring_expense_id}:${expense.spent_on}`),
+  )
 
-  return "Could not delete expense. Please try again."
+  const projectedOnly: Expense[] = (projected ?? [])
+    .filter((p) => !persistedKeys.has(`${p.recurring_expense_id}:${p.spent_on}`))
+    .map((p) => ({
+      id: `${p.recurring_expense_id}:${p.spent_on}`,
+      description: p.description,
+      amount: p.amount,
+      currency: p.currency,
+      spent_on: p.spent_on,
+      category_id: p.category_id,
+      user_id: "",
+      installment_group_id: null,
+      installment_index: null,
+      installment_total: null,
+      original_description: null,
+      recurring_expense_id: p.recurring_expense_id,
+      created_at: "",
+      updated_at: "",
+      isProjected: true,
+    }))
+
+  return [...persisted, ...projectedOnly].sort((a, b) =>
+    a.spent_on < b.spent_on ? 1 : a.spent_on > b.spent_on ? -1 : 0,
+  )
 }
 
 function matchesFilter(
@@ -70,17 +100,22 @@ function ExpenseList() {
     isLoading: expensesLoading,
     isError: expensesError,
   } = useExpenses({ year, month })
+  const { data: projected, isLoading: projectedLoading } = useRecurringProjection({
+    year,
+    month,
+  })
   const {
     data: categories,
     isLoading: categoriesLoading,
     isError: categoriesError,
   } = useCategories()
-  const isLoading = expensesLoading || categoriesLoading
+  const isLoading = expensesLoading || categoriesLoading || projectedLoading
   const deleteExpense = useDeleteExpense()
   const filter = useExpenseFilterStore((state) => state.filter)
 
   const [editTarget, setEditTarget] = useState<Expense | undefined>(undefined)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [actionTarget, setActionTarget] = useState<Expense | null>(null)
   const [deleteErrors, setDeleteErrors] = useState<Record<string, string>>({})
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(
     new Set()
@@ -92,7 +127,10 @@ function ExpenseList() {
     [categories]
   )
 
-  const monthExpenses = useMemo(() => expenses ?? [], [expenses])
+  const monthExpenses = useMemo(
+    () => mergeProjectedExpenses(expenses ?? [], projected),
+    [expenses, projected]
+  )
 
   const filteredExpenses = useMemo(
     () =>
@@ -105,7 +143,10 @@ function ExpenseList() {
   const filteredTotal = useMemo(
     () =>
       filteredExpenses.reduce(
-        (cents, expense) => cents + Math.round(Number(expense.amount) * 100),
+        (cents, expense) =>
+          expense.isProjected
+            ? cents
+            : cents + Math.round(Number(expense.amount) * 100),
         0
       ) / 100,
     [filteredExpenses]
@@ -133,7 +174,7 @@ function ExpenseList() {
     })
     setPendingDeleteIds((prev) => new Set(prev).add(expense.id))
     try {
-      await deleteExpense.mutateAsync(expense.id)
+      await deleteExpense.mutateAsync({ id: expense.id })
     } catch (err) {
       setDeleteErrors((prev) => ({
         ...prev,
@@ -145,6 +186,14 @@ function ExpenseList() {
         next.delete(expense.id)
         return next
       })
+    }
+  }
+
+  function handleDeleteClick(expense: Expense) {
+    if (expense.installment_group_id || expense.recurring_expense_id) {
+      setActionTarget(expense)
+    } else {
+      handleDelete(expense)
     }
   }
 
@@ -197,23 +246,41 @@ function ExpenseList() {
         <ul className="flex flex-col gap-2">
           {filteredExpenses.map((expense) => {
             const category = categoryById.get(expense.category_id)
+            const isInstallment = !!expense.installment_group_id
+            const isRecurringSourced = !!expense.recurring_expense_id
+            const displayDescription = expense.original_description ?? expense.description
 
             return (
               <li key={expense.id} className="flex flex-col gap-1">
-                <div className="flex items-center gap-3 rounded-2xl border bg-card px-4 py-3">
+                <div
+                  className={cn(
+                    "flex items-center gap-3 rounded-2xl border bg-card px-4 py-3",
+                    expense.isProjected && "border-dashed opacity-70"
+                  )}
+                >
                   <CategoryColor
                     color={category?.color ?? "#9ca3af"}
                     className="size-5"
                   />
 
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-sm font-medium">
-                        {expense.description}
+                        {displayDescription}
                       </span>
                       <span className="shrink-0 text-xs text-muted-foreground">
                         {category?.name ?? "Uncategorized"}
                       </span>
+                      {isInstallment && (
+                        <Badge variant="outline">
+                          {expense.installment_index}/{expense.installment_total}
+                        </Badge>
+                      )}
+                      {isRecurringSourced && (
+                        <Badge variant={expense.isProjected ? "secondary" : "outline"}>
+                          {expense.isProjected ? "Upcoming" : "Recurring"}
+                        </Badge>
+                      )}
                     </div>
                     <span className="text-xs text-muted-foreground">
                       {formatExpenseDate(expense.spent_on)}
@@ -228,16 +295,21 @@ function ExpenseList() {
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      aria-label={`Edit ${expense.description}`}
+                      aria-label={`Edit ${displayDescription}`}
                       onClick={() => openEdit(expense)}
+                      disabled={expense.isProjected}
                     >
                       <PencilIcon />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon-sm"
-                      aria-label={`Delete ${expense.description}`}
-                      onClick={() => handleDelete(expense)}
+                      aria-label={
+                        isRecurringSourced
+                          ? `Stop recurring expense ${displayDescription}`
+                          : `Delete ${displayDescription}`
+                      }
+                      onClick={() => handleDeleteClick(expense)}
                       disabled={pendingDeleteIds.has(expense.id)}
                       className="text-destructive hover:text-destructive"
                     >
@@ -261,6 +333,16 @@ function ExpenseList() {
         open={dialogOpen}
         onOpenChange={handleDialogOpenChange}
         expense={editTarget}
+      />
+
+      <ExpenseActionDialog
+        target={actionTarget}
+        month={{ year, month }}
+        onOpenChange={(open) => {
+          if (!open) {
+            setActionTarget(null)
+          }
+        }}
       />
     </section>
   )

@@ -20,6 +20,11 @@ const queryKeys = {
     monthKey
       ? ([...queryKeys.all, "budget-settings", monthKey] as const)
       : ([...queryKeys.all, "budget-settings"] as const),
+  recurring: () => [...queryKeys.all, "recurring"] as const,
+  recurringProjection: (monthKey?: string) =>
+    monthKey
+      ? ([...queryKeys.all, "recurring-projection", monthKey] as const)
+      : ([...queryKeys.all, "recurring-projection"] as const),
 }
 
 export { queryKeys }

@@ -6,7 +6,7 @@ import type { QueryClient } from "@tanstack/react-query"
 import { apiFetch } from "@/lib/api-client"
 import { queryKeys } from "@/lib/query-keys"
 
-import type { Expense, ExpensePayload } from "../schemas"
+import type { Expense, ExpensePayload, InstallmentCreatePayload } from "../schemas"
 
 function invalidateExpenseDependents(queryClient: QueryClient) {
   queryClient.invalidateQueries({ queryKey: queryKeys.expenses() })
@@ -19,6 +19,16 @@ function useCreateExpense() {
   return useMutation({
     mutationFn: (data: ExpensePayload) =>
       apiFetch<Expense>("/expenses", { method: "POST", body: data }),
+    onSuccess: () => invalidateExpenseDependents(queryClient),
+  })
+}
+
+function useCreateInstallmentExpense() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (data: InstallmentCreatePayload) =>
+      apiFetch<Expense[]>("/expenses/installments", { method: "POST", body: data }),
     onSuccess: () => invalidateExpenseDependents(queryClient),
   })
 }
@@ -37,9 +47,12 @@ function useDeleteExpense() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (id: string) => apiFetch<null>(`/expenses/${id}`, { method: "DELETE" }),
+    mutationFn: ({ id, scope }: { id: string; scope?: "row" | "group" }) =>
+      apiFetch<null>(`/expenses/${id}${scope ? `?scope=${scope}` : ""}`, {
+        method: "DELETE",
+      }),
     onSuccess: () => invalidateExpenseDependents(queryClient),
   })
 }
 
-export { useCreateExpense, useUpdateExpense, useDeleteExpense }
+export { useCreateExpense, useCreateInstallmentExpense, useUpdateExpense, useDeleteExpense }
