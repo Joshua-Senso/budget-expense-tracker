@@ -2,7 +2,17 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Date, DateTime, Index, Numeric, String, func
+from sqlalchemy import (
+    CheckConstraint,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -15,7 +25,18 @@ class Expense(Base):
         String, primary_key=True, default=lambda: str(uuid.uuid4())
     )
     user_id: Mapped[str] = mapped_column(String, nullable=False)
-    category_id: Mapped[str] = mapped_column(String, nullable=False)
+    # ON DELETE RESTRICT: the DB is the source of truth against a concurrent
+    # insert racing a category delete -- an app-level "is this category in
+    # use" check alone can't be atomic against that race (see delete_category
+    # in categories/service.py, which also checks up front for a clean 409).
+    category_id: Mapped[str] = mapped_column(
+        ForeignKey(
+            "user_categories.id",
+            name="fk_expenses_category_id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+    )
     description: Mapped[str] = mapped_column(String, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="PHP")
@@ -60,6 +81,12 @@ class Expense(Base):
             name="ck_expenses_installment_metadata",
         ),
         Index("ix_expenses_user_spent_on", "user_id", "spent_on"),
+        Index(
+            "ix_expenses_household_spent_on",
+            "household_id",
+            "spent_on",
+            postgresql_where=text("household_id IS NOT NULL"),
+        ),
         Index("ix_expenses_installment_group_id", "installment_group_id"),
         Index(
             "ux_expenses_recurring_expense_id_spent_on",

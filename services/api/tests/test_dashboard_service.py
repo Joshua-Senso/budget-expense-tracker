@@ -1,6 +1,9 @@
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+from app.core.households import HouseholdAccessError
 from app.features.budget.service import MonthlySettingNotFoundError
 from app.features.dashboard.service import get_dashboard_summary, get_yearly_overview
 
@@ -212,3 +215,80 @@ def test_get_yearly_overview_query_scopes_categories_to_owner() -> None:
     query_str = str(executed_query.compile(compile_kwargs={"literal_binds": True}))
     assert "user_categories.user_id = 'user-1'" in query_str
     assert "user_categories.household_id IS NULL" in query_str
+
+
+# --- household scope ---
+
+
+def test_get_dashboard_summary_household_scope_requires_membership() -> None:
+    db = _mock_db()
+    db.scalar.return_value = None  # not a member
+
+    with pytest.raises(HouseholdAccessError):
+        get_dashboard_summary(db, "user-1", "2026-07", household_id="household-1")
+
+
+def test_get_dashboard_summary_household_scope_returns_shared_totals() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "member-1"  # requester is a member of household-1
+    db.execute.return_value.all.return_value = [
+        ("cat-card", "Groceries", "#FF0000", "card", Decimal("300.00")),
+    ]
+
+    result = get_dashboard_summary(db, "user-1", "2026-07", household_id="household-1")
+
+    assert result["card"]["total"] == Decimal("300.00")
+    query_str = str(
+        db.execute.call_args_list[0][0][0].compile(
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "expenses.household_id = 'household-1'" in query_str
+    assert "user_categories.household_id = 'household-1'" in query_str
+
+
+def test_get_dashboard_summary_household_scope_has_no_personal_salary() -> None:
+    """Household-level salary isn't supported yet (PRD §14 open question) --
+    a household summary must not leak the caller's personal salary into
+    shared totals."""
+    db = _mock_db()
+    db.scalar.return_value = "member-1"
+    db.execute.return_value.all.return_value = []
+
+    with patch(
+        "app.features.dashboard.service.get_monthly_setting",
+        return_value=_make_setting(Decimal("1000.00")),
+    ) as mock_get_setting:
+        result = get_dashboard_summary(
+            db, "user-1", "2026-07", household_id="household-1"
+        )
+
+    mock_get_setting.assert_not_called()
+    assert result["monthly_net_salary"] is None
+    assert result["remaining"] is None
+    assert result["percent_used"] is None
+
+
+def test_get_yearly_overview_household_scope_requires_membership() -> None:
+    db = _mock_db()
+    db.scalar.return_value = None  # not a member
+
+    with pytest.raises(HouseholdAccessError):
+        get_yearly_overview(db, "user-1", 2026, household_id="household-1")
+
+
+def test_get_yearly_overview_household_scope_returns_shared_totals() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "member-1"  # requester is a member of household-1
+    db.execute.return_value.all.return_value = [(2, "card", Decimal("300.00"))]
+
+    result = get_yearly_overview(db, "user-1", 2026, household_id="household-1")
+
+    assert result["months"][1]["card_total"] == Decimal("300.00")
+    query_str = str(
+        db.execute.call_args_list[0][0][0].compile(
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert "expenses.household_id = 'household-1'" in query_str
+    assert "user_categories.household_id = 'household-1'" in query_str

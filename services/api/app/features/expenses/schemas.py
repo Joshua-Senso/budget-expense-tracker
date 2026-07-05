@@ -36,6 +36,7 @@ class ExpenseCreate(BaseModel):
     amount: Decimal
     currency: str = "PHP"
     spent_on: date
+    household_id: str | None = None
 
     @field_validator("description")
     @classmethod
@@ -101,6 +102,7 @@ class ExpenseUpdate(BaseModel):
 class ExpenseResponse(BaseModel):
     id: str
     user_id: str
+    household_id: str | None = None
     category_id: str
     description: str
     amount: Decimal

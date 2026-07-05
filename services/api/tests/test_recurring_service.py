@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from app.core.households import HouseholdAccessError, HouseholdRoleError
 from app.features.recurring.models import RecurringExpense
 from app.features.recurring.service import (
     CategoryOwnershipError,
@@ -192,7 +193,7 @@ def test_project_month_includes_occurrence_exactly_on_end_on() -> None:
 def test_deactivate_recurring_expense_bounds_end_on_to_month() -> None:
     db = _mock_db()
     rule = _make_rule(end_on=None)
-    db.execute.return_value.scalar_one_or_none.return_value = rule
+    db.get.return_value = rule
 
     result = deactivate_recurring_expense(db, "user-1", "rec-1", 2026, 7)
 
@@ -204,7 +205,7 @@ def test_deactivate_recurring_expense_bounds_end_on_to_month() -> None:
 def test_deactivate_recurring_expense_does_not_extend_earlier_end_on() -> None:
     db = _mock_db()
     rule = _make_rule(end_on=date(2026, 5, 31))
-    db.execute.return_value.scalar_one_or_none.return_value = rule
+    db.get.return_value = rule
 
     deactivate_recurring_expense(db, "user-1", "rec-1", 2026, 7)
 
@@ -213,7 +214,7 @@ def test_deactivate_recurring_expense_does_not_extend_earlier_end_on() -> None:
 
 def test_deactivate_recurring_expense_not_found_raises() -> None:
     db = _mock_db()
-    db.execute.return_value.scalar_one_or_none.return_value = None
+    db.get.return_value = None
 
     with pytest.raises(RecurringExpenseNotFoundError):
         deactivate_recurring_expense(db, "user-1", "missing", 2026, 7)
@@ -325,3 +326,139 @@ def test_generate_recurring_expenses_handles_mixed_rules() -> None:
     assert created == 1
     db.add.assert_called_once()
     assert db.add.call_args[0][0].recurring_expense_id == "rec-1"
+
+
+def test_generate_recurring_expenses_carries_household_id_onto_generated_row() -> None:
+    """Household-scoped rules must generate household-scoped expenses too."""
+    db = _mock_db()
+    rule = _make_rule(start_on=date(2026, 1, 15), household_id="household-1")
+    db.execute.return_value.scalars.return_value.all.return_value = [rule]
+    db.scalar.side_effect = ["cat-1", None]  # category accessible, no existing row
+
+    created = generate_recurring_expenses(db, 2026, 7)
+
+    assert created == 1
+    added = db.add.call_args[0][0]
+    assert added.household_id == "household-1"
+
+
+# --- household scoping ---
+
+
+def test_list_recurring_expenses_household_scope_requires_membership() -> None:
+    db = _mock_db()
+    db.scalar.return_value = None  # not a member
+
+    with pytest.raises(HouseholdAccessError):
+        list_recurring_expenses(db, "user-1", household_id="household-1")
+
+
+def test_list_recurring_expenses_household_scope_returns_shared_rows() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "member-1"
+    shared = [_make_rule(household_id="household-1", user_id="user-2")]
+    db.execute.return_value.scalars.return_value.all.return_value = shared
+
+    result = list_recurring_expenses(db, "user-1", household_id="household-1")
+
+    assert result == shared
+
+
+def test_create_recurring_expense_household_scope_requires_membership() -> None:
+    db = _mock_db()
+    db.scalar.return_value = None  # not a member
+
+    with pytest.raises(HouseholdAccessError):
+        create_recurring_expense(
+            db,
+            "user-1",
+            "cat-1",
+            "Netflix",
+            Decimal("500"),
+            "PHP",
+            date(2026, 1, 15),
+            household_id="household-1",
+        )
+
+    db.add.assert_not_called()
+
+
+def test_create_recurring_expense_household_scope_happy_path() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"  # both membership and category checks pass
+
+    result = create_recurring_expense(
+        db,
+        "user-1",
+        "cat-1",
+        "Netflix",
+        Decimal("500"),
+        "PHP",
+        date(2026, 1, 15),
+        household_id="household-1",
+    )
+
+    assert result.household_id == "household-1"
+    db.add.assert_called_once()
+    db.commit.assert_called_once()
+
+
+def test_create_recurring_expense_household_scope_category_check_excludes_personal_fallback() -> (
+    None
+):
+    """Regression: a household-scoped rule must not accept the creator's
+    personal category -- other household members can't resolve it when they
+    list the shared rule (Greptile P1 on PR #106)."""
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+
+    create_recurring_expense(
+        db,
+        "user-1",
+        "cat-1",
+        "Netflix",
+        Decimal("500"),
+        "PHP",
+        date(2026, 1, 15),
+        household_id="household-1",
+    )
+
+    category_check_query = db.scalar.call_args_list[-1][0][0]
+    assert "user_id" not in str(category_check_query)
+
+
+def test_deactivate_recurring_expense_shared_row_accessible_to_household_owner() -> (
+    None
+):
+    db = _mock_db()
+    rule = _make_rule(household_id="household-1", user_id="user-2", end_on=None)
+    db.get.return_value = rule
+    db.scalar.return_value = "owner"  # requester owns household-1
+
+    result = deactivate_recurring_expense(db, "user-1", "rec-1", 2026, 7)
+
+    assert result.is_active is False
+
+
+def test_deactivate_recurring_expense_shared_row_inaccessible_to_non_member() -> None:
+    db = _mock_db()
+    rule = _make_rule(household_id="household-1", user_id="user-2")
+    db.get.return_value = rule
+    db.scalar.return_value = None  # requester is not a member
+
+    with pytest.raises(RecurringExpenseNotFoundError):
+        deactivate_recurring_expense(db, "user-1", "rec-1", 2026, 7)
+
+
+def test_deactivate_recurring_expense_shared_row_forbidden_for_non_owner_member() -> (
+    None
+):
+    """Only the household owner may stop a shared recurring rule (PRD §10);
+    members may read and add but not edit/delete."""
+    db = _mock_db()
+    rule = _make_rule(household_id="household-1", user_id="user-2")
+    db.get.return_value = rule
+    db.scalar.return_value = "member"  # requester is a member, not the owner
+
+    with pytest.raises(HouseholdRoleError):
+        deactivate_recurring_expense(db, "user-1", "rec-1", 2026, 7)

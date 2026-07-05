@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -26,10 +26,11 @@ def _parse_month_key(month_key: str) -> tuple[int, int]:
 
 @router.get("", response_model=list[RecurringExpenseResponse])
 def list_recurring_expenses(
+    household_id: str | None = Query(default=None),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[RecurringExpenseResponse]:
-    return service.list_recurring_expenses(db, user_id)
+    return service.list_recurring_expenses(db, user_id, household_id=household_id)
 
 
 @router.post(
@@ -50,6 +51,7 @@ def create_recurring_expense(
             body.currency,
             body.start_on,
             body.end_on,
+            household_id=body.household_id,
         )
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
@@ -58,11 +60,12 @@ def create_recurring_expense(
 @router.get("/projection/{month_key}", response_model=list[ProjectedExpense])
 def get_monthly_projection(
     month_key: str = Path(pattern=_MONTH_KEY_PATTERN),
+    household_id: str | None = Query(default=None),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[ProjectedExpense]:
     year, month = _parse_month_key(month_key)
-    return service.project_month(db, user_id, year, month)
+    return service.project_month(db, user_id, year, month, household_id=household_id)
 
 
 @router.delete("/{recurring_id}/{month_key}", status_code=status.HTTP_204_NO_CONTENT)

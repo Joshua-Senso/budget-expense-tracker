@@ -21,10 +21,13 @@ router = APIRouter(prefix="/expenses", tags=["expenses"])
 def list_expenses(
     year: int | None = Query(default=None, ge=1, le=9999),
     month: int | None = Query(default=None, ge=1, le=12),
+    household_id: str | None = Query(default=None),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[ExpenseResponse]:
-    return service.list_expenses(db, user_id, year=year, month=month)
+    return service.list_expenses(
+        db, user_id, year=year, month=month, household_id=household_id
+    )
 
 
 @router.post("", response_model=ExpenseResponse, status_code=status.HTTP_201_CREATED)
@@ -42,6 +45,7 @@ def create_expense(
             body.amount,
             body.currency,
             body.spent_on,
+            household_id=body.household_id,
         )
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
@@ -67,6 +71,7 @@ def create_installment_expenses(
             body.currency,
             body.spent_on,
             body.installment_total,
+            household_id=body.household_id,
         )
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")

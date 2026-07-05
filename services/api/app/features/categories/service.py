@@ -2,7 +2,14 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.households import (
+    assert_household_scope,
+    household_scope_clauses,
+    locate_household_scoped_row,
+)
 from app.features.categories.models import UserCategory
+from app.features.expenses.models import Expense
+from app.features.recurring.models import RecurringExpense
 
 
 _DEFAULT_CATEGORIES: list[tuple[str, str, str]] = [
@@ -26,6 +33,10 @@ class DuplicateCategoryNameError(Exception):
 
 
 class LastCategoryError(Exception):
+    pass
+
+
+class CategoryInUseError(Exception):
     pass
 
 
@@ -86,20 +97,39 @@ def seed_default_categories(db: Session, user_id: str) -> list[UserCategory]:
     return categories
 
 
-def _personal_categories_query(user_id: str):
+def _scoped_categories_query(user_id: str, household_id: str | None):
     return select(UserCategory).where(
-        UserCategory.user_id == user_id,
-        UserCategory.household_id.is_(None),
+        *household_scope_clauses(UserCategory, user_id, household_id)
     )
 
 
-def list_categories(db: Session, user_id: str) -> list[UserCategory]:
+def _locate_category_for_mutation(
+    db: Session, user_id: str, category_id: str
+) -> UserCategory:
+    """Locate a category for edit/delete: only the household owner may edit
+    or delete a shared category (PRD §10); members may read and add."""
+    return locate_household_scoped_row(
+        db,
+        UserCategory,
+        category_id,
+        user_id,
+        CategoryNotFoundError,
+        require_owner=True,
+    )
+
+
+def list_categories(
+    db: Session, user_id: str, household_id: str | None = None
+) -> list[UserCategory]:
+    assert_household_scope(db, user_id, household_id)
     categories = list(
-        db.execute(_personal_categories_query(user_id).order_by(UserCategory.name))
+        db.execute(
+            _scoped_categories_query(user_id, household_id).order_by(UserCategory.name)
+        )
         .scalars()
         .all()
     )
-    if not categories:
+    if not categories and household_id is None:
         categories = seed_default_categories(db, user_id)
         categories.sort(key=lambda c: c.name)
     return categories
@@ -111,9 +141,15 @@ def create_category(
     name: str,
     color: str,
     expense_group: str,
+    household_id: str | None = None,
 ) -> UserCategory:
+    assert_household_scope(db, user_id, household_id)
     category = UserCategory(
-        user_id=user_id, name=name, color=color, expense_group=expense_group
+        user_id=user_id,
+        name=name,
+        color=color,
+        expense_group=expense_group,
+        household_id=household_id,
     )
     db.add(category)
     _commit_or_raise_duplicate(db, name)
@@ -128,11 +164,7 @@ def update_category(
     color: str | None = None,
     expense_group: str | None = None,
 ) -> UserCategory:
-    category = db.execute(
-        _personal_categories_query(user_id).where(UserCategory.id == category_id)
-    ).scalar_one_or_none()
-    if category is None:
-        raise CategoryNotFoundError(category_id)
+    category = _locate_category_for_mutation(db, user_id, category_id)
 
     for attr, value in [
         ("name", name),
@@ -146,19 +178,56 @@ def update_category(
     return category
 
 
+def _category_in_use(db: Session, category_id: str) -> bool:
+    """True if any expense or recurring rule references this category.
+
+    This up-front check exists only to give an ordinary delete a clean 409
+    instead of a raw IntegrityError. It can't be atomic against a concurrent
+    insert racing this delete, so it is not the actual safety net -- that's
+    the `fk_expenses_category_id` / `fk_recurring_expenses_category_id`
+    `ON DELETE RESTRICT` constraints (migration 009), which the DB enforces
+    transactionally regardless of timing. `_commit_or_raise_in_use` below
+    converts a constraint violation from that race into the same error.
+    """
+    return (
+        db.scalar(select(Expense.id).where(Expense.category_id == category_id))
+        is not None
+        or db.scalar(
+            select(RecurringExpense.id).where(
+                RecurringExpense.category_id == category_id
+            )
+        )
+        is not None
+    )
+
+
+def _commit_or_raise_in_use(db: Session, category_id: str) -> None:
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if getattr(exc.orig, "sqlstate", None) == "23503":  # foreign_key_violation
+            raise CategoryInUseError(category_id) from exc
+        raise
+
+
 def delete_category(db: Session, user_id: str, category_id: str) -> None:
-    # Lock all personal categories for this user so concurrent deletes
-    # serialize and cannot both pass the last-category guard.
+    category = _locate_category_for_mutation(db, user_id, category_id)
+
+    if _category_in_use(db, category_id):
+        raise CategoryInUseError(category_id)
+
+    # Lock every category in the same scope so concurrent deletes serialize
+    # and cannot both pass the last-category guard.
     all_categories = list(
-        db.execute(_personal_categories_query(user_id).with_for_update())
+        db.execute(
+            _scoped_categories_query(user_id, category.household_id).with_for_update()
+        )
         .scalars()
         .all()
     )
-    category = next((c for c in all_categories if c.id == category_id), None)
-    if category is None:
-        raise CategoryNotFoundError(category_id)
     if len(all_categories) <= 1:
         raise LastCategoryError()
 
     db.delete(category)
-    db.commit()
+    _commit_or_raise_in_use(db, category_id)

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -10,6 +10,7 @@ from app.features.categories.schemas import (
     CategoryUpdate,
 )
 from app.features.categories.service import (
+    CategoryInUseError,
     CategoryNotFoundError,
     DuplicateCategoryNameError,
     LastCategoryError,
@@ -20,10 +21,11 @@ router = APIRouter(prefix="/categories", tags=["categories"])
 
 @router.get("", response_model=list[CategoryResponse])
 def list_categories(
+    household_id: str | None = Query(default=None),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[CategoryResponse]:
-    return service.list_categories(db, user_id)
+    return service.list_categories(db, user_id, household_id=household_id)
 
 
 @router.post("", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
@@ -34,7 +36,12 @@ def create_category(
 ) -> CategoryResponse:
     try:
         return service.create_category(
-            db, user_id, body.name, body.color, body.expense_group
+            db,
+            user_id,
+            body.name,
+            body.color,
+            body.expense_group,
+            household_id=body.household_id,
         )
     except DuplicateCategoryNameError:
         raise HTTPException(
@@ -79,4 +86,10 @@ def delete_category(
     except LastCategoryError:
         raise HTTPException(
             status_code=409, detail="Cannot delete the last remaining category."
+        )
+    except CategoryInUseError:
+        raise HTTPException(
+            status_code=409,
+            detail="Cannot delete a category that still has expenses or "
+            "recurring rules referencing it.",
         )
