@@ -132,6 +132,21 @@ def test_project_month_excludes_rule_starting_after_month() -> None:
     assert "start_on <=" in str(executed_query)
 
 
+def test_project_month_only_queries_active_rules() -> None:
+    """Must match generate_recurring_expenses's is_active filter (BUD-39 review).
+
+    Otherwise a deactivated rule could still show up as a projected/exported
+    row that the worker will never actually materialize.
+    """
+    db = _mock_db()
+    db.execute.return_value.scalars.return_value.all.return_value = []
+
+    project_month(db, "user-1", 2026, 7)
+
+    executed_query = db.execute.call_args[0][0]
+    assert "is_active" in str(executed_query)
+
+
 def test_project_month_preserves_historical_occurrence_after_end_on() -> None:
     """A rule ended in a past month still projects for months <= its end_on."""
     db = _mock_db()

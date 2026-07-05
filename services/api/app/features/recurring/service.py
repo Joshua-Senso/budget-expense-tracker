@@ -124,6 +124,7 @@ def project_month(
     rules = (
         db.execute(
             _own_recurring_query(user_id).where(
+                RecurringExpense.is_active.is_(True),
                 RecurringExpense.start_on <= month_end,
                 or_(
                     RecurringExpense.end_on.is_(None),
