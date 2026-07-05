@@ -14,11 +14,15 @@ class Settings(BaseSettings):
     auth_jwt_issuer: str
     auth_jwt_audience: str
     frontend_origin: str
-    s3_endpoint_url: str
-    s3_region: str
-    s3_access_key_id: str
-    s3_secret_access_key: str
-    receipts_bucket: str
+    # Optional: receipt storage is a single feature (attachments), not something
+    # every request path touches, so it shouldn't block app startup, Alembic, or
+    # unrelated endpoints when unset. app.core.storage fails fast instead, the
+    # moment something actually tries to use object storage without it configured.
+    s3_endpoint_url: str | None = None
+    s3_region: str | None = None
+    s3_access_key_id: str | None = None
+    s3_secret_access_key: str | None = None
+    receipts_bucket: str | None = None
 
     @computed_field
     @property

@@ -5,8 +5,11 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
-from app.core.storage import get_s3_client
+from app.core.storage import (
+    StorageNotConfiguredError,
+    get_receipts_bucket,
+    get_s3_client,
+)
 from app.features.attachments.models import ExpenseAttachment
 from app.features.expenses.models import Expense
 
@@ -100,11 +103,10 @@ def create_upload_url(
 
     extension = ALLOWED_CONTENT_TYPES[content_type]
     object_key = f"{user_id}/{expense_id}/{uuid.uuid4()}{extension}"
-    settings = get_settings()
     upload_url = get_s3_client().generate_presigned_url(
         "put_object",
         Params={
-            "Bucket": settings.receipts_bucket,
+            "Bucket": get_receipts_bucket(),
             "Key": object_key,
             "ContentType": content_type,
         },
@@ -122,14 +124,11 @@ def confirm_attachment(
     if not object_key.startswith(expected_prefix):
         raise ObjectNotUploadedError(object_key)
 
-    settings = get_settings()
     try:
         # head_object is the source of truth for content_type/size_bytes -- a
         # client-supplied value here could misreport them to dodge the size cap
         # or the content-type allow-list.
-        head = get_s3_client().head_object(
-            Bucket=settings.receipts_bucket, Key=object_key
-        )
+        head = get_s3_client().head_object(Bucket=get_receipts_bucket(), Key=object_key)
     except ClientError as exc:
         raise ObjectNotUploadedError(object_key) from exc
 
@@ -184,10 +183,9 @@ def create_download_url(
     db: Session, user_id: str, expense_id: str, attachment_id: str
 ) -> str:
     attachment = _get_owned_attachment(db, user_id, expense_id, attachment_id)
-    settings = get_settings()
     return get_s3_client().generate_presigned_url(
         "get_object",
-        Params={"Bucket": settings.receipts_bucket, "Key": attachment.object_key},
+        Params={"Bucket": get_receipts_bucket(), "Key": attachment.object_key},
         ExpiresIn=DOWNLOAD_URL_EXPIRES_IN,
     )
 
@@ -201,10 +199,12 @@ def delete_attachment(
     db.commit()
 
     # DB row is the source of truth for what's listable/downloadable, so it's
-    # deleted first: if this S3 call fails, the object is merely orphaned
-    # (a storage-cost cleanup concern) rather than a row pointing at nothing.
-    settings = get_settings()
+    # deleted first: if this S3 cleanup step fails for any reason -- a bucket
+    # error, or storage not being configured at all -- the object is merely
+    # orphaned (a storage-cost concern), not a row pointing at nothing. Since
+    # the row is already gone, that failure must not surface as an error to
+    # the caller, who already got the delete they asked for.
     try:
-        get_s3_client().delete_object(Bucket=settings.receipts_bucket, Key=object_key)
-    except ClientError:
+        get_s3_client().delete_object(Bucket=get_receipts_bucket(), Key=object_key)
+    except (ClientError, StorageNotConfiguredError):
         pass

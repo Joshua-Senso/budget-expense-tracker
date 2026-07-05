@@ -1,8 +1,10 @@
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.core.security import get_current_user_id
+from app.core.storage import StorageNotConfiguredError
 from app.features.attachments.router import router as attachments_router
 from app.features.budget.router import router as budget_router
 from app.features.categories.router import router as categories_router
@@ -28,6 +30,13 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_router)
     app.include_router(recurring_router)
     app.include_router(import_export_router)
+
+    @app.exception_handler(StorageNotConfiguredError)
+    def handle_storage_not_configured(
+        request: Request, exc: StorageNotConfiguredError
+    ) -> JSONResponse:
+        del request
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
 
     @app.get("/health")
     def health() -> dict[str, str]:

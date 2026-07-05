@@ -301,3 +301,26 @@ def test_delete_attachment_returns_404_when_not_found(monkeypatch) -> None:
     )
 
     assert response.status_code == 404
+
+
+# --- storage not configured ---
+
+
+def test_create_upload_url_returns_503_when_storage_not_configured(monkeypatch) -> None:
+    from app.core.storage import StorageNotConfiguredError
+
+    def raise_unconfigured(db, user_id, expense_id, content_type, size_bytes):
+        raise StorageNotConfiguredError("Receipt storage is not configured; missing: ")
+
+    monkeypatch.setattr(
+        "app.features.attachments.router.service.create_upload_url", raise_unconfigured
+    )
+    client, token = _authed_client(monkeypatch)
+
+    response = client.post(
+        "/expenses/exp-1/attachments/upload-url",
+        headers=_auth_header(token),
+        json={"content_type": "image/jpeg", "size_bytes": 1024},
+    )
+
+    assert response.status_code == 503
