@@ -16,6 +16,36 @@ const RECEIPT_ACCEPT = ALLOWED_RECEIPT_TYPES.join(",")
 // fall back to a generic icon with a link to open the signed URL directly.
 const PREVIEWABLE_RECEIPT_TYPES = new Set(["image/jpeg", "image/png", "image/webp"])
 
+// Many browsers (esp. on platforms without native HEIC/HEIF decoding) report
+// file.type as "" for these -- fall back to the extension so a receipt type
+// the feature advertises isn't rejected before it ever reaches the API.
+const EXTENSION_CONTENT_TYPES: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  heic: "image/heic",
+  heif: "image/heif",
+}
+
+function extensionOf(filename: string) {
+  return filename.slice(filename.lastIndexOf(".") + 1).toLowerCase()
+}
+
+// The content type the upload-url request and the PUT's Content-Type header
+// must both use -- resolved once so they can never disagree.
+function resolveReceiptContentType(file: File): string | null {
+  if (ALLOWED_RECEIPT_TYPES.includes(file.type)) {
+    return file.type
+  }
+
+  if (file.type) {
+    return null
+  }
+
+  return EXTENSION_CONTENT_TYPES[extensionOf(file.name)] ?? null
+}
+
 type Attachment = {
   id: string
   expense_id: string
@@ -36,7 +66,7 @@ type AttachmentDownloadUrl = {
 }
 
 function isAllowedReceiptType(file: File) {
-  return ALLOWED_RECEIPT_TYPES.includes(file.type)
+  return resolveReceiptContentType(file) !== null
 }
 
 function isReceiptSizeValid(file: File) {
@@ -50,5 +80,6 @@ export {
   PREVIEWABLE_RECEIPT_TYPES,
   isAllowedReceiptType,
   isReceiptSizeValid,
+  resolveReceiptContentType,
 }
 export type { Attachment, AttachmentUploadUrl, AttachmentDownloadUrl }
