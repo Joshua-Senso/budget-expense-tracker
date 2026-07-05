@@ -207,9 +207,9 @@ def test_delete_category_shared_row_allowed_for_owner() -> None:
     db = _mock_db()
     cat = _make_category(id="cat-1", household_id="household-1", user_id="user-2")
     db.get.return_value = cat
-    # in call order: membership check, owner-role check, then the two
+    # in call order: the single membership+owner role check, then the two
     # in-use checks
-    db.scalar.side_effect = ["owner", "owner", None, None]
+    db.scalar.side_effect = ["owner", None, None]
     db.execute.return_value.scalars.return_value.all.return_value = [
         cat,
         _make_category(id="cat-2", household_id="household-1"),

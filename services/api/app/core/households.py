@@ -1,3 +1,5 @@
+from typing import Any, Protocol, TypeVar
+
 from sqlalchemy import String, select
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.exc import DataError
@@ -84,3 +86,56 @@ def assert_household_owner(db: Session, user_id: str, household_id: str) -> None
     """
     if not is_household_owner(db, user_id, household_id):
         raise HouseholdRoleError(household_id)
+
+
+class _HouseholdScopedRow(Protocol):
+    user_id: str
+    household_id: str | None
+
+
+_RowT = TypeVar("_RowT", bound=_HouseholdScopedRow)
+
+
+def locate_household_scoped_row(
+    db: Session,
+    model: type[_RowT],
+    row_id: str,
+    user_id: str,
+    not_found: type[Exception],
+    *,
+    require_owner: bool = False,
+) -> _RowT:
+    """Locate a row that is either personal (`user_id`, `household_id IS
+    NULL`) or shared within a household (any member may read/add; only the
+    owner role may mutate -- PRD §10).
+
+    Raises `not_found` uniformly whether the row doesn't exist or the caller
+    isn't a member, so a non-member can't distinguish the two. When
+    `require_owner` is set, fetches the household role once and reuses it for
+    both the membership and ownership checks, instead of querying `members`
+    twice for the same `(user_id, household_id)`.
+    """
+    row = db.get(model, row_id)
+    if row is None:
+        raise not_found(row_id)
+    if row.household_id is None:
+        if row.user_id != user_id:
+            raise not_found(row_id)
+        return row
+    role = get_household_role(db, user_id, row.household_id)
+    if role is None:
+        raise not_found(row_id)
+    if require_owner and role != OWNER_ROLE:
+        raise HouseholdRoleError(row.household_id)
+    return row
+
+
+def household_scope_clauses(
+    model: type[_HouseholdScopedRow], user_id: str, household_id: str | None
+) -> list[Any]:
+    """Build the WHERE clauses for `model` rows visible in the given scope:
+    every row shared in `household_id`, or the caller's own personal rows.
+    """
+    if household_id is not None:
+        return [model.household_id == household_id]
+    return [model.user_id == user_id, model.household_id.is_(None)]

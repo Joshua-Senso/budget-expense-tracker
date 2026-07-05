@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.households import HouseholdAccessError, HouseholdRoleError
 from app.core.security import get_current_user_id
 from app.features.expenses import service
 from app.features.expenses.schemas import (
@@ -17,11 +16,6 @@ from app.features.expenses.service import CategoryOwnershipError, ExpenseNotFoun
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
 
-_HOUSEHOLD_NOT_FOUND = HTTPException(status_code=404, detail="Household not found.")
-_HOUSEHOLD_OWNER_REQUIRED = HTTPException(
-    status_code=403, detail="Only the household owner can do this."
-)
-
 
 @router.get("", response_model=list[ExpenseResponse])
 def list_expenses(
@@ -31,12 +25,9 @@ def list_expenses(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[ExpenseResponse]:
-    try:
-        return service.list_expenses(
-            db, user_id, year=year, month=month, household_id=household_id
-        )
-    except HouseholdAccessError:
-        raise _HOUSEHOLD_NOT_FOUND from None
+    return service.list_expenses(
+        db, user_id, year=year, month=month, household_id=household_id
+    )
 
 
 @router.post("", response_model=ExpenseResponse, status_code=status.HTTP_201_CREATED)
@@ -56,8 +47,6 @@ def create_expense(
             body.spent_on,
             household_id=body.household_id,
         )
-    except HouseholdAccessError:
-        raise _HOUSEHOLD_NOT_FOUND from None
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
 
@@ -84,8 +73,6 @@ def create_installment_expenses(
             body.installment_total,
             household_id=body.household_id,
         )
-    except HouseholdAccessError:
-        raise _HOUSEHOLD_NOT_FOUND from None
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
 
@@ -110,8 +97,6 @@ def update_expense(
         )
     except ExpenseNotFoundError:
         raise HTTPException(status_code=404, detail="Expense not found.")
-    except HouseholdRoleError:
-        raise _HOUSEHOLD_OWNER_REQUIRED from None
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
 
@@ -127,5 +112,3 @@ def delete_expense(
         service.delete_expense(db, user_id, expense_id, scope=scope)
     except ExpenseNotFoundError:
         raise HTTPException(status_code=404, detail="Expense not found.")
-    except HouseholdRoleError:
-        raise _HOUSEHOLD_OWNER_REQUIRED from None

@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
+from app.core.households import HouseholdAccessError, HouseholdRoleError
 from app.core.security import get_current_user_id
 from app.core.storage import StorageNotConfiguredError
 from app.features.attachments.router import router as attachments_router
@@ -37,6 +38,22 @@ def create_app() -> FastAPI:
     ) -> JSONResponse:
         del request
         return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @app.exception_handler(HouseholdAccessError)
+    def handle_household_access_error(
+        request: Request, exc: HouseholdAccessError
+    ) -> JSONResponse:
+        del request, exc
+        return JSONResponse(status_code=404, content={"detail": "Household not found."})
+
+    @app.exception_handler(HouseholdRoleError)
+    def handle_household_role_error(
+        request: Request, exc: HouseholdRoleError
+    ) -> JSONResponse:
+        del request, exc
+        return JSONResponse(
+            status_code=403, content={"detail": "Only the household owner can do this."}
+        )
 
     @app.get("/health")
     def health() -> dict[str, str]:

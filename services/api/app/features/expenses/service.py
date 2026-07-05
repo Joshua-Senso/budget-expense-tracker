@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.core.households import (
     assert_household_member,
-    assert_household_owner,
-    is_household_member,
+    household_scope_clauses,
+    locate_household_scoped_row,
 )
 from app.features.categories.models import UserCategory
 from app.features.expenses.models import Expense
@@ -25,33 +25,17 @@ class CategoryOwnershipError(Exception):
 
 
 def _scoped_expense_query(user_id: str, household_id: str | None):
-    if household_id is not None:
-        return select(Expense).where(Expense.household_id == household_id)
     return select(Expense).where(
-        Expense.user_id == user_id,
-        Expense.household_id.is_(None),
+        *household_scope_clauses(Expense, user_id, household_id)
     )
-
-
-def _locate_expense(db: Session, user_id: str, expense_id: str) -> Expense:
-    expense = db.get(Expense, expense_id)
-    if expense is None:
-        raise ExpenseNotFoundError(expense_id)
-    if expense.household_id is None:
-        if expense.user_id != user_id:
-            raise ExpenseNotFoundError(expense_id)
-    elif not is_household_member(db, user_id, expense.household_id):
-        raise ExpenseNotFoundError(expense_id)
-    return expense
 
 
 def _locate_expense_for_mutation(db: Session, user_id: str, expense_id: str) -> Expense:
     """Locate an expense for edit/delete: only the household owner may edit
     or delete a shared expense (PRD §10); members may read and add."""
-    expense = _locate_expense(db, user_id, expense_id)
-    if expense.household_id is not None:
-        assert_household_owner(db, user_id, expense.household_id)
-    return expense
+    return locate_household_scoped_row(
+        db, Expense, expense_id, user_id, ExpenseNotFoundError, require_owner=True
+    )
 
 
 def _assert_category_accessible(

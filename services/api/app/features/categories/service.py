@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 
 from app.core.households import (
     assert_household_member,
-    assert_household_owner,
-    is_household_member,
+    household_scope_clauses,
+    locate_household_scoped_row,
 )
 from app.features.categories.models import UserCategory
 from app.features.expenses.models import Expense
@@ -98,24 +98,9 @@ def seed_default_categories(db: Session, user_id: str) -> list[UserCategory]:
 
 
 def _scoped_categories_query(user_id: str, household_id: str | None):
-    if household_id is not None:
-        return select(UserCategory).where(UserCategory.household_id == household_id)
     return select(UserCategory).where(
-        UserCategory.user_id == user_id,
-        UserCategory.household_id.is_(None),
+        *household_scope_clauses(UserCategory, user_id, household_id)
     )
-
-
-def _locate_category(db: Session, user_id: str, category_id: str) -> UserCategory:
-    category = db.get(UserCategory, category_id)
-    if category is None:
-        raise CategoryNotFoundError(category_id)
-    if category.household_id is None:
-        if category.user_id != user_id:
-            raise CategoryNotFoundError(category_id)
-    elif not is_household_member(db, user_id, category.household_id):
-        raise CategoryNotFoundError(category_id)
-    return category
 
 
 def _locate_category_for_mutation(
@@ -123,10 +108,14 @@ def _locate_category_for_mutation(
 ) -> UserCategory:
     """Locate a category for edit/delete: only the household owner may edit
     or delete a shared category (PRD §10); members may read and add."""
-    category = _locate_category(db, user_id, category_id)
-    if category.household_id is not None:
-        assert_household_owner(db, user_id, category.household_id)
-    return category
+    return locate_household_scoped_row(
+        db,
+        UserCategory,
+        category_id,
+        user_id,
+        CategoryNotFoundError,
+        require_owner=True,
+    )
 
 
 def list_categories(

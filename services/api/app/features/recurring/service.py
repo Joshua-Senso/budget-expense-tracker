@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.core.households import (
     assert_household_member,
-    assert_household_owner,
-    is_household_member,
+    household_scope_clauses,
+    locate_household_scoped_row,
 )
 from app.features.categories.models import UserCategory
 from app.features.expenses.models import Expense
@@ -26,26 +26,9 @@ class CategoryOwnershipError(Exception):
 
 
 def _scoped_recurring_query(user_id: str, household_id: str | None):
-    if household_id is not None:
-        return select(RecurringExpense).where(
-            RecurringExpense.household_id == household_id
-        )
     return select(RecurringExpense).where(
-        RecurringExpense.user_id == user_id,
-        RecurringExpense.household_id.is_(None),
+        *household_scope_clauses(RecurringExpense, user_id, household_id)
     )
-
-
-def _locate_recurring(db: Session, user_id: str, recurring_id: str) -> RecurringExpense:
-    recurring = db.get(RecurringExpense, recurring_id)
-    if recurring is None:
-        raise RecurringExpenseNotFoundError(recurring_id)
-    if recurring.household_id is None:
-        if recurring.user_id != user_id:
-            raise RecurringExpenseNotFoundError(recurring_id)
-    elif not is_household_member(db, user_id, recurring.household_id):
-        raise RecurringExpenseNotFoundError(recurring_id)
-    return recurring
 
 
 def _locate_recurring_for_mutation(
@@ -53,10 +36,14 @@ def _locate_recurring_for_mutation(
 ) -> RecurringExpense:
     """Locate a rule for edit/delete: only the household owner may edit or
     stop a shared rule (PRD §10); members may read and add."""
-    recurring = _locate_recurring(db, user_id, recurring_id)
-    if recurring.household_id is not None:
-        assert_household_owner(db, user_id, recurring.household_id)
-    return recurring
+    return locate_household_scoped_row(
+        db,
+        RecurringExpense,
+        recurring_id,
+        user_id,
+        RecurringExpenseNotFoundError,
+        require_owner=True,
+    )
 
 
 def _is_category_accessible(

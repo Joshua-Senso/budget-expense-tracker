@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.core.households import assert_household_member
+from app.core.households import assert_household_member, household_scope_clauses
 from app.features.budget.service import MonthlySettingNotFoundError, get_monthly_setting
 from app.features.categories.models import UserCategory
 from app.features.expenses.models import Expense
@@ -28,16 +28,9 @@ def _year_bounds(year: int) -> tuple[date, date]:
 
 
 def _scope_conditions(user_id: str, household_id: str | None) -> list[Any]:
-    if household_id is not None:
-        return [
-            Expense.household_id == household_id,
-            UserCategory.household_id == household_id,
-        ]
     return [
-        Expense.user_id == user_id,
-        Expense.household_id.is_(None),
-        UserCategory.user_id == user_id,
-        UserCategory.household_id.is_(None),
+        *household_scope_clauses(Expense, user_id, household_id),
+        *household_scope_clauses(UserCategory, user_id, household_id),
     ]
 
 
