@@ -25,6 +25,10 @@ const queryKeys = {
     monthKey
       ? ([...queryKeys.all, "recurring-projection", monthKey] as const)
       : ([...queryKeys.all, "recurring-projection"] as const),
+  attachments: (expenseId: string) =>
+    [...queryKeys.all, "attachments", expenseId] as const,
+  attachmentDownloadUrl: (expenseId: string, attachmentId: string) =>
+    [...queryKeys.all, "attachments", expenseId, attachmentId, "download-url"] as const,
 }
 
 export { queryKeys }

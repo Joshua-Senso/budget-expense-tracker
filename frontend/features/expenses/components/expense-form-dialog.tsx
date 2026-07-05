@@ -30,6 +30,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { ReceiptAttachments } from "@/features/attachments"
 import { CategoryColor, useCategories, type Category } from "@/features/categories"
 import { useCreateRecurringExpense } from "@/features/recurring"
 import { ApiError } from "@/lib/api-client"
@@ -316,6 +317,8 @@ function EditExpenseFields({
           </p>
         )}
       </form>
+
+      <ReceiptAttachments expenseId={expense.id} />
 
       <DialogFooter showCloseButton>
         <Button type="submit" form="expense-form" disabled={isPending}>
