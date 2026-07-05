@@ -51,8 +51,26 @@ export const auth = betterAuth({
       teams: {
         enabled: false,
       },
+      // Explicit even though it's the library default: a household's creator
+      // must become its owner (PRD §9.5, §7.9).
+      creatorRole: "owner",
       schema: {
-        organization: { modelName: "organizations" },
+        organization: {
+          modelName: "organizations",
+          // Household base currency + theme extend the organization record
+          // instead of a separate table (PRD §9.5).
+          additionalFields: {
+            // `required: false` only means "optional as caller input" — the
+            // column itself is NOT NULL with a DB default, and `defaultValue`
+            // fills it in on create when the caller omits it. Do NOT use
+            // `input: false` here: that excludes the field from BOTH the
+            // create *and* update body schemas, which would make these
+            // fields impossible to change later (needed by M7 base currency
+            // and M8 theme switching).
+            baseCurrency: { type: "string", required: false, defaultValue: "PHP" },
+            theme: { type: "string", required: false, defaultValue: "dark" },
+          },
+        },
         member: { modelName: "members" },
         invitation: { modelName: "invitations" },
       },
