@@ -1,6 +1,7 @@
 import { kyselyAdapter } from "@better-auth/kysely-adapter"
 import { betterAuth } from "better-auth"
 import { jwt, organization } from "better-auth/plugins"
+import { memberAc, ownerAc } from "better-auth/plugins/organization/access"
 import { Kysely, PostgresDialect } from "kysely"
 import { Pool } from "pg"
 
@@ -54,6 +55,21 @@ export const auth = betterAuth({
       // Explicit even though it's the library default: a household's creator
       // must become its owner (PRD §9.5, §7.9).
       creatorRole: "owner",
+      // Only owner/member are offered for now (PRD §9.5 "additional roles
+      // such as admin may be enabled later"). We still map "admin" here —
+      // to the least-privileged, member-equivalent permission set — rather
+      // than omitting it: the library's invite/update-role role-name
+      // validators accept "admin" unconditionally (hardcoded, not driven by
+      // this `roles` option), so a caller can still end up with a member row
+      // whose role is "admin". Without an explicit mapping, permission
+      // lookups for that role resolve to `undefined` and every action is
+      // silently denied instead of predictably denied. Bump this to a real
+      // elevated role only when the product actually adds one.
+      roles: {
+        owner: ownerAc,
+        member: memberAc,
+        admin: memberAc,
+      },
       schema: {
         organization: {
           modelName: "organizations",
