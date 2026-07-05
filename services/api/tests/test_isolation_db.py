@@ -43,6 +43,7 @@ from app.features.categories.service import (
     list_categories,
     update_category,
 )
+from app.features.dashboard.service import get_dashboard_summary, get_yearly_overview
 from app.features.expenses.service import (
     ExpenseNotFoundError,
     create_expense,
@@ -50,7 +51,7 @@ from app.features.expenses.service import (
     list_expenses,
     update_expense,
 )
-from app.features.import_export.service import build_year_export_rows
+from app.features.import_export.service import build_import_plan, build_year_export_rows
 from app.features.recurring.service import (
     RecurringExpenseNotFoundError,
     create_recurring_expense,
@@ -231,6 +232,15 @@ def test_shared_category_household_role_gating(tenants) -> None:
     member_categories = list_categories(db, member_id, household_id=household_id)
     assert shared.id in [c.id for c in member_categories]
 
+    # A member may add a shared row (PRD §10) -- only mutating an existing
+    # one is owner-only.
+    member_added = create_category(
+        db, member_id, "Groceries", "#10B981", "card", household_id=household_id
+    )
+    assert member_added.id in [
+        c.id for c in list_categories(db, owner_id, household_id=household_id)
+    ]
+
     with pytest.raises(HouseholdRoleError):
         update_category(db, member_id, shared.id, name="Renamed by member")
     with pytest.raises(HouseholdRoleError):
@@ -280,6 +290,22 @@ def test_shared_expense_household_role_gating(tenants) -> None:
     member_expenses = list_expenses(db, member_id, household_id=household_id)
     assert expense.id in [e.id for e in member_expenses]
 
+    # A member may add a shared row (PRD §10) -- only mutating an existing
+    # one is owner-only.
+    member_added = create_expense(
+        db,
+        member_id,
+        category.id,
+        "Member's grocery run",
+        Decimal("800.00"),
+        "PHP",
+        date(2026, 7, 2),
+        household_id=household_id,
+    )
+    assert member_added.id in [
+        e.id for e in list_expenses(db, owner_id, household_id=household_id)
+    ]
+
     with pytest.raises(HouseholdRoleError):
         update_expense(db, member_id, expense.id, description="Edited by member")
     with pytest.raises(HouseholdRoleError):
@@ -326,6 +352,22 @@ def test_shared_recurring_household_role_gating(tenants) -> None:
 
     member_rules = list_recurring_expenses(db, member_id, household_id=household_id)
     assert rule.id in [r.id for r in member_rules]
+
+    # A member may add a shared row (PRD §10) -- only mutating an existing
+    # one is owner-only.
+    member_added = create_recurring_expense(
+        db,
+        member_id,
+        category.id,
+        "Internet",
+        Decimal("1500.00"),
+        "PHP",
+        date(2026, 1, 1),
+        household_id=household_id,
+    )
+    assert member_added.id in [
+        r.id for r in list_recurring_expenses(db, owner_id, household_id=household_id)
+    ]
 
     with pytest.raises(HouseholdRoleError):
         deactivate_recurring_expense(db, member_id, rule.id, 2026, 7)
@@ -412,3 +454,93 @@ def test_year_export_isolated_from_other_user(tenants) -> None:
 
     assert any(row["description"] == "Lunch" for row in owner_rows)
     assert member_rows == []
+
+
+def test_import_row_id_from_other_user_is_rejected(tenants) -> None:
+    db, owner_id, member_id, _outsider_id, _household_id = tenants
+    category = create_category(db, owner_id, "Groceries", "#F59E0B", "card")
+    expense = create_expense(
+        db, owner_id, category.id, "Lunch", Decimal("150.00"), "PHP", date(2026, 7, 1)
+    )
+
+    # A member's own import sheet references the owner's expense by Row ID --
+    # e.g. copy-pasted from a shared spreadsheet -- attempting to edit it.
+    row = {
+        "_row_number": 2,
+        "Row ID": expense.id,
+        "Row Type": "recorded",
+        "Category": "Groceries",
+        "Description": "Hacked",
+        "Amount": "999.00",
+        "Currency": "PHP",
+        "Date": "2026-07-01",
+    }
+
+    inserts, updates, delete_ids, errors = build_import_plan(db, member_id, [row], 2026)
+
+    assert inserts == []
+    assert updates == []
+    assert expense.id not in delete_ids
+    assert any(
+        f"Row ID '{expense.id}' was not found." in message
+        for error in errors
+        for message in error["messages"]
+    )
+
+    db.refresh(expense)
+    assert expense.description == "Lunch"
+
+
+# --- dashboard aggregates ---
+
+
+def test_personal_dashboard_isolated_from_other_user(tenants) -> None:
+    db, owner_id, member_id, _outsider_id, _household_id = tenants
+    category = create_category(db, owner_id, "Food", "#F59E0B", "card")
+    create_expense(
+        db, owner_id, category.id, "Lunch", Decimal("150.00"), "PHP", date(2026, 7, 1)
+    )
+
+    owner_summary = get_dashboard_summary(db, owner_id, "2026-07")
+    member_summary = get_dashboard_summary(db, member_id, "2026-07")
+    assert owner_summary["month_total"] == Decimal("150.00")
+    assert member_summary["month_total"] == Decimal("0")
+
+    owner_overview = get_yearly_overview(db, owner_id, 2026)
+    member_overview = get_yearly_overview(db, member_id, 2026)
+    assert owner_overview["year_total"] == Decimal("150.00")
+    assert member_overview["year_total"] == Decimal("0")
+
+
+def test_shared_dashboard_household_role_gating(tenants) -> None:
+    db, owner_id, member_id, outsider_id, household_id = tenants
+    category = create_category(
+        db, owner_id, "Rent", "#3B82F6", "other", household_id=household_id
+    )
+    create_expense(
+        db,
+        owner_id,
+        category.id,
+        "Monthly rent",
+        Decimal("15000.00"),
+        "PHP",
+        date(2026, 7, 1),
+        household_id=household_id,
+    )
+
+    with pytest.raises(HouseholdAccessError):
+        get_dashboard_summary(db, outsider_id, "2026-07", household_id=household_id)
+    with pytest.raises(HouseholdAccessError):
+        get_yearly_overview(db, outsider_id, 2026, household_id=household_id)
+
+    member_summary = get_dashboard_summary(
+        db, member_id, "2026-07", household_id=household_id
+    )
+    member_overview = get_yearly_overview(
+        db, member_id, 2026, household_id=household_id
+    )
+    assert member_summary["month_total"] == Decimal("15000.00")
+    assert member_overview["year_total"] == Decimal("15000.00")
+
+    # The household summary must never leak the caller's personal salary.
+    assert member_summary["monthly_net_salary"] is None
