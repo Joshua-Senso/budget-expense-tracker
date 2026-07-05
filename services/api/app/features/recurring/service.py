@@ -6,6 +6,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.features.categories.models import UserCategory
+from app.features.expenses.models import Expense
 from app.features.recurring.models import RecurringExpense
 from app.features.recurring.schemas import ProjectedExpense
 
@@ -140,3 +141,61 @@ def project_month(
         if (spent_on := _occurrence_date(rule.start_on, year, month)) >= rule.start_on
         and (rule.end_on is None or spent_on <= rule.end_on)
     ]
+
+
+def generate_recurring_expenses(db: Session, year: int, month: int) -> int:
+    """Persist one Expense row per active recurring rule due in a given month.
+
+    Idempotent: a (recurring_expense_id, spent_on) unique index backs the
+    existence check, so re-running for the same month is a no-op. Runs across
+    all users/rules — this is worker-internal, not a user-scoped API call.
+    """
+    month_start, month_end = _month_bounds(year, month)
+    rules = (
+        db.execute(
+            select(RecurringExpense).where(
+                RecurringExpense.is_active.is_(True),
+                RecurringExpense.household_id.is_(None),
+                RecurringExpense.start_on <= month_end,
+                or_(
+                    RecurringExpense.end_on.is_(None),
+                    RecurringExpense.end_on >= month_start,
+                ),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    created = 0
+    for rule in rules:
+        spent_on = _occurrence_date(rule.start_on, year, month)
+        if spent_on < rule.start_on or (
+            rule.end_on is not None and spent_on > rule.end_on
+        ):
+            continue
+
+        exists = db.scalar(
+            select(Expense.id).where(
+                Expense.recurring_expense_id == rule.id,
+                Expense.spent_on == spent_on,
+            )
+        )
+        if exists is not None:
+            continue
+
+        db.add(
+            Expense(
+                user_id=rule.user_id,
+                category_id=rule.category_id,
+                description=rule.description,
+                amount=rule.amount,
+                currency=rule.currency,
+                spent_on=spent_on,
+                recurring_expense_id=rule.id,
+            )
+        )
+        created += 1
+
+    db.commit()
+    return created

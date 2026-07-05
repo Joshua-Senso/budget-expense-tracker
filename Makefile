@@ -2,7 +2,7 @@
 # Run from the repo root:  make <target>   (just `make` lists everything)
 
 .DEFAULT_GOAL := help
-.PHONY: help install up down logs reset api auth web
+.PHONY: help install up down logs reset api auth web worker
 
 COMPOSE := docker compose -f infra/docker-compose.dev.yml
 
@@ -29,6 +29,9 @@ reset: ## Stop the dev stack and DELETE all local data (volumes)
 
 api: ## Run the FastAPI dev server with hot reload (:8000)
 	cd services/api && uv run uvicorn app.main:app --reload
+
+worker: ## Run the arq background worker
+	cd services/api && uv run arq app.worker.settings.WorkerSettings
 
 auth: ## Run the Better Auth (Bun/Hono) dev server
 	cd services/auth && bun run dev

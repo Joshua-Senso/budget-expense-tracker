@@ -110,6 +110,7 @@ class ExpenseResponse(BaseModel):
     installment_index: int | None = None
     installment_total: int | None = None
     original_description: str | None = None
+    recurring_expense_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
