@@ -39,6 +39,12 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "size_bytes > 0", name="ck_expense_attachments_size_positive"
         ),
+        sa.ForeignKeyConstraint(
+            ["expense_id"],
+            ["expenses.id"],
+            name="fk_expense_attachments_expense_id",
+            ondelete="CASCADE",
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("object_key"),
     )

@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from botocore.exceptions import ClientError
+from sqlalchemy.exc import IntegrityError
 
 from app.features.attachments.models import ExpenseAttachment
 from app.features.attachments.service import (
@@ -61,8 +62,12 @@ def _result(scalar_one_or_none=None, all_=None) -> MagicMock:
     return result
 
 
-def _mock_s3(monkeypatch) -> MagicMock:
+def _mock_s3(monkeypatch, head_object: dict | None = None) -> MagicMock:
     client = MagicMock()
+    client.head_object.return_value = head_object or {
+        "ContentType": "image/jpeg",
+        "ContentLength": 1024,
+    }
     monkeypatch.setattr(
         "app.features.attachments.service.get_s3_client", lambda: client
     )
@@ -119,19 +124,19 @@ def test_create_upload_url_rejects_oversized_file(monkeypatch) -> None:
 # --- confirm_attachment ---
 
 
-def test_confirm_attachment_creates_row_when_object_exists(monkeypatch) -> None:
+def test_confirm_attachment_creates_row_using_actual_s3_metadata(monkeypatch) -> None:
     db = _mock_db()
     db.execute.return_value = _result(_make_expense())
-    client = _mock_s3(monkeypatch)
+    client = _mock_s3(monkeypatch, {"ContentType": "image/png", "ContentLength": 2048})
 
-    attachment = confirm_attachment(
-        db, "user-1", "exp-1", "user-1/exp-1/abc.jpg", "image/jpeg", 1024
-    )
+    attachment = confirm_attachment(db, "user-1", "exp-1", "user-1/exp-1/abc.png")
 
     client.head_object.assert_called_once()
     db.add.assert_called_once()
     db.commit.assert_called_once()
-    assert attachment.object_key == "user-1/exp-1/abc.jpg"
+    assert attachment.object_key == "user-1/exp-1/abc.png"
+    assert attachment.content_type == "image/png"
+    assert attachment.size_bytes == 2048
 
 
 def test_confirm_attachment_raises_when_object_key_not_owned(monkeypatch) -> None:
@@ -140,9 +145,7 @@ def test_confirm_attachment_raises_when_object_key_not_owned(monkeypatch) -> Non
     _mock_s3(monkeypatch)
 
     with pytest.raises(ObjectNotUploadedError):
-        confirm_attachment(
-            db, "user-1", "exp-1", "other-user/exp-1/abc.jpg", "image/jpeg", 1024
-        )
+        confirm_attachment(db, "user-1", "exp-1", "other-user/exp-1/abc.jpg")
 
 
 def test_confirm_attachment_raises_when_object_missing_from_bucket(monkeypatch) -> None:
@@ -154,9 +157,7 @@ def test_confirm_attachment_raises_when_object_missing_from_bucket(monkeypatch) 
     )
 
     with pytest.raises(ObjectNotUploadedError):
-        confirm_attachment(
-            db, "user-1", "exp-1", "user-1/exp-1/abc.jpg", "image/jpeg", 1024
-        )
+        confirm_attachment(db, "user-1", "exp-1", "user-1/exp-1/abc.jpg")
 
 
 def test_confirm_attachment_raises_when_expense_not_owned(monkeypatch) -> None:
@@ -165,9 +166,59 @@ def test_confirm_attachment_raises_when_expense_not_owned(monkeypatch) -> None:
     _mock_s3(monkeypatch)
 
     with pytest.raises(ExpenseNotFoundError):
-        confirm_attachment(
-            db, "user-1", "exp-1", "user-1/exp-1/abc.jpg", "image/jpeg", 1024
-        )
+        confirm_attachment(db, "user-1", "exp-1", "user-1/exp-1/abc.jpg")
+
+
+def test_confirm_attachment_rejects_actual_content_type_not_allowed(
+    monkeypatch,
+) -> None:
+    db = _mock_db()
+    db.execute.return_value = _result(_make_expense())
+    _mock_s3(monkeypatch, {"ContentType": "application/pdf", "ContentLength": 1024})
+
+    with pytest.raises(InvalidContentTypeError):
+        confirm_attachment(db, "user-1", "exp-1", "user-1/exp-1/abc.jpg")
+
+
+def test_confirm_attachment_rejects_actual_size_over_cap(monkeypatch) -> None:
+    db = _mock_db()
+    db.execute.return_value = _result(_make_expense())
+    _mock_s3(
+        monkeypatch,
+        {"ContentType": "image/jpeg", "ContentLength": MAX_SIZE_BYTES + 1},
+    )
+
+    with pytest.raises(AttachmentTooLargeError):
+        confirm_attachment(db, "user-1", "exp-1", "user-1/exp-1/abc.jpg")
+
+
+def test_confirm_attachment_is_idempotent_on_retry(monkeypatch) -> None:
+    db = _mock_db()
+    existing = _make_attachment(object_key="user-1/exp-1/abc.jpg")
+    db.execute.side_effect = [
+        _result(_make_expense()),
+        _result(existing),
+    ]
+    db.commit.side_effect = IntegrityError("insert", {}, Exception("duplicate key"))
+    _mock_s3(monkeypatch)
+
+    attachment = confirm_attachment(db, "user-1", "exp-1", "user-1/exp-1/abc.jpg")
+
+    db.rollback.assert_called_once()
+    assert attachment is existing
+
+
+def test_confirm_attachment_reraises_unexpected_integrity_error(monkeypatch) -> None:
+    db = _mock_db()
+    db.execute.side_effect = [
+        _result(_make_expense()),
+        _result(None),
+    ]
+    db.commit.side_effect = IntegrityError("insert", {}, Exception("some other cause"))
+    _mock_s3(monkeypatch)
+
+    with pytest.raises(IntegrityError):
+        confirm_attachment(db, "user-1", "exp-1", "user-1/exp-1/abc.jpg")
 
 
 # --- list_attachments ---
@@ -234,4 +285,36 @@ def test_delete_attachment_removes_object_and_row(monkeypatch) -> None:
 
     client.delete_object.assert_called_once()
     db.delete.assert_called_once_with(attachment)
+    db.commit.assert_called_once()
+
+
+def test_delete_attachment_commits_db_row_before_deleting_s3_object(
+    monkeypatch,
+) -> None:
+    """The DB row is deleted first so a failed S3 call orphans an object
+    rather than leaving a row that points at nothing (see delete_attachment)."""
+    db = _mock_db()
+    attachment = _make_attachment()
+    db.execute.side_effect = [_result(_make_expense()), _result(attachment)]
+    client = _mock_s3(monkeypatch)
+    calls: list[str] = []
+    db.commit.side_effect = lambda: calls.append("commit")
+    client.delete_object.side_effect = lambda **kwargs: calls.append("delete_object")
+
+    delete_attachment(db, "user-1", "exp-1", "att-1")
+
+    assert calls == ["commit", "delete_object"]
+
+
+def test_delete_attachment_swallows_s3_failure_after_db_commit(monkeypatch) -> None:
+    db = _mock_db()
+    attachment = _make_attachment()
+    db.execute.side_effect = [_result(_make_expense()), _result(attachment)]
+    client = _mock_s3(monkeypatch)
+    client.delete_object.side_effect = ClientError(
+        {"Error": {"Code": "500", "Message": "boom"}}, "DeleteObject"
+    )
+
+    delete_attachment(db, "user-1", "exp-1", "att-1")
+
     db.commit.assert_called_once()

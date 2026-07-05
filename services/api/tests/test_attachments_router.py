@@ -145,20 +145,14 @@ def test_confirm_attachment_returns_created_attachment(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         "app.features.attachments.router.service.confirm_attachment",
-        lambda db, user_id, expense_id, object_key, content_type, size_bytes: (
-            attachment
-        ),
+        lambda db, user_id, expense_id, object_key: attachment,
     )
     client, token = _authed_client(monkeypatch)
 
     response = client.post(
         "/expenses/exp-1/attachments",
         headers=_auth_header(token),
-        json={
-            "object_key": "user-123/exp-1/abc.jpg",
-            "content_type": "image/jpeg",
-            "size_bytes": 1024,
-        },
+        json={"object_key": "user-123/exp-1/abc.jpg"},
     )
 
     assert response.status_code == 201
@@ -170,7 +164,7 @@ def test_confirm_attachment_returns_created_attachment(monkeypatch) -> None:
 def test_confirm_attachment_returns_400_when_object_missing(monkeypatch) -> None:
     from app.features.attachments.service import ObjectNotUploadedError
 
-    def raise_missing(db, user_id, expense_id, object_key, content_type, size_bytes):
+    def raise_missing(db, user_id, expense_id, object_key):
         raise ObjectNotUploadedError(object_key)
 
     monkeypatch.setattr(
@@ -181,11 +175,7 @@ def test_confirm_attachment_returns_400_when_object_missing(monkeypatch) -> None
     response = client.post(
         "/expenses/exp-1/attachments",
         headers=_auth_header(token),
-        json={
-            "object_key": "user-123/exp-1/abc.jpg",
-            "content_type": "image/jpeg",
-            "size_bytes": 1024,
-        },
+        json={"object_key": "user-123/exp-1/abc.jpg"},
     )
 
     assert response.status_code == 400

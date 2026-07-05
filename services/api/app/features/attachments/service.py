@@ -2,6 +2,7 @@ import uuid
 
 from botocore.exceptions import ClientError
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -113,16 +114,9 @@ def create_upload_url(
 
 
 def confirm_attachment(
-    db: Session,
-    user_id: str,
-    expense_id: str,
-    object_key: str,
-    content_type: str,
-    size_bytes: int,
+    db: Session, user_id: str, expense_id: str, object_key: str
 ) -> ExpenseAttachment:
     expense = _get_owned_expense(db, user_id, expense_id)
-    _validate_content_type(content_type)
-    _validate_size(size_bytes)
 
     expected_prefix = f"{user_id}/{expense_id}/"
     if not object_key.startswith(expected_prefix):
@@ -130,9 +124,19 @@ def confirm_attachment(
 
     settings = get_settings()
     try:
-        get_s3_client().head_object(Bucket=settings.receipts_bucket, Key=object_key)
+        # head_object is the source of truth for content_type/size_bytes -- a
+        # client-supplied value here could misreport them to dodge the size cap
+        # or the content-type allow-list.
+        head = get_s3_client().head_object(
+            Bucket=settings.receipts_bucket, Key=object_key
+        )
     except ClientError as exc:
         raise ObjectNotUploadedError(object_key) from exc
+
+    content_type = head["ContentType"]
+    size_bytes = head["ContentLength"]
+    _validate_content_type(content_type)
+    _validate_size(size_bytes)
 
     attachment = ExpenseAttachment(
         expense_id=expense.id,
@@ -142,7 +146,19 @@ def confirm_attachment(
         size_bytes=size_bytes,
     )
     db.add(attachment)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # A retried confirm (e.g. the first request committed but the client
+        # timed out waiting for the response) re-confirms the same object_key.
+        # Treat it as idempotent rather than surfacing a 500.
+        db.rollback()
+        existing = db.execute(
+            select(ExpenseAttachment).where(ExpenseAttachment.object_key == object_key)
+        ).scalar_one_or_none()
+        if existing is None:
+            raise
+        return existing
     return attachment
 
 
@@ -180,9 +196,15 @@ def delete_attachment(
     db: Session, user_id: str, expense_id: str, attachment_id: str
 ) -> None:
     attachment = _get_owned_attachment(db, user_id, expense_id, attachment_id)
-    settings = get_settings()
-    get_s3_client().delete_object(
-        Bucket=settings.receipts_bucket, Key=attachment.object_key
-    )
+    object_key = attachment.object_key
     db.delete(attachment)
     db.commit()
+
+    # DB row is the source of truth for what's listable/downloadable, so it's
+    # deleted first: if this S3 call fails, the object is merely orphaned
+    # (a storage-cost cleanup concern) rather than a row pointing at nothing.
+    settings = get_settings()
+    try:
+        get_s3_client().delete_object(Bucket=settings.receipts_bucket, Key=object_key)
+    except ClientError:
+        pass

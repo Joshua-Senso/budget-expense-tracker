@@ -65,9 +65,7 @@ def confirm_attachment(
     db: Session = Depends(get_db),
 ) -> AttachmentResponse:
     try:
-        return service.confirm_attachment(
-            db, user_id, expense_id, body.object_key, body.content_type, body.size_bytes
-        )
+        return service.confirm_attachment(db, user_id, expense_id, body.object_key)
     except ExpenseNotFoundError:
         raise _EXPENSE_NOT_FOUND from None
     except InvalidContentTypeError:

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, Index, String, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -13,7 +13,12 @@ class ExpenseAttachment(Base):
     id: Mapped[str] = mapped_column(
         String, primary_key=True, default=lambda: str(uuid.uuid4())
     )
-    expense_id: Mapped[str] = mapped_column(String, nullable=False)
+    # ON DELETE CASCADE: an attachment can never outlive its expense, regardless
+    # of which code path deletes the expense (single row, installment group,
+    # or bulk import delete all issue raw DELETE statements the ORM can't hook).
+    expense_id: Mapped[str] = mapped_column(
+        ForeignKey("expenses.id", ondelete="CASCADE"), nullable=False
+    )
     user_id: Mapped[str] = mapped_column(String, nullable=False)
     # Reserved for M6 (households); mirrors the parent expense's household_id.
     household_id: Mapped[str | None] = mapped_column(String, nullable=True)

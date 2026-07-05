@@ -15,9 +15,10 @@ class AttachmentUploadURLResponse(BaseModel):
 
 
 class AttachmentConfirm(BaseModel):
+    # content_type/size_bytes are deliberately not accepted here -- they are
+    # re-derived from the uploaded object's actual S3 metadata (head_object)
+    # so a client can't misreport them to bypass the size/type checks.
     object_key: str
-    content_type: str
-    size_bytes: int = Field(gt=0)
 
 
 class AttachmentResponse(BaseModel):
