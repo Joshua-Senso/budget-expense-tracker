@@ -89,3 +89,89 @@ def test_export_expenses_rejects_non_numeric_year(monkeypatch) -> None:
     )
 
     assert response.status_code == 422
+
+
+def _upload(
+    client: Any, token: str, year: str = "2026", filename: str = "expenses.xlsx"
+):
+    return client.post(
+        f"/import-export/import/{year}",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": (filename, BytesIO(b"fake-bytes"), "application/octet-stream")},
+    )
+
+
+def test_import_expenses_returns_summary(monkeypatch) -> None:
+    from app.features.import_export.schemas import ImportSummary
+
+    monkeypatch.setattr(
+        "app.features.import_export.router.service.import_workbook",
+        lambda db, user_id, contents, filename, year: ImportSummary(
+            inserted=1, updated=2, deleted=3
+        ),
+    )
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    client = make_client_with_jwk(monkeypatch, private_key.public_key())
+    token = make_token(private_key)
+
+    response = _upload(client, token)
+
+    assert response.status_code == 200
+    assert response.json() == {"inserted": 1, "updated": 2, "deleted": 3}
+
+
+def test_import_expenses_requires_auth(monkeypatch) -> None:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    client = make_client_with_jwk(monkeypatch, private_key.public_key())
+
+    response = client.post(
+        "/import-export/import/2026",
+        files={"file": ("expenses.xlsx", BytesIO(b"fake"), "application/octet-stream")},
+    )
+
+    assert response.status_code == 401
+
+
+def test_import_expenses_returns_400_on_parse_error(monkeypatch) -> None:
+    from app.features.import_export.service import WorkbookParseError
+
+    def raise_parse_error(db, user_id, contents, filename, year):
+        raise WorkbookParseError("Missing required columns: Amount")
+
+    monkeypatch.setattr(
+        "app.features.import_export.router.service.import_workbook", raise_parse_error
+    )
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    client = make_client_with_jwk(monkeypatch, private_key.public_key())
+    token = make_token(private_key)
+
+    response = _upload(client, token)
+
+    assert response.status_code == 400
+    assert "Missing required columns" in response.json()["detail"]
+
+
+def test_import_expenses_returns_422_with_row_errors_on_validation_failure(
+    monkeypatch,
+) -> None:
+    from app.features.import_export.service import ImportValidationError
+
+    def raise_validation_error(db, user_id, contents, filename, year):
+        raise ImportValidationError(
+            [{"row": 3, "messages": ["Description is required."]}]
+        )
+
+    monkeypatch.setattr(
+        "app.features.import_export.router.service.import_workbook",
+        raise_validation_error,
+    )
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    client = make_client_with_jwk(monkeypatch, private_key.public_key())
+    token = make_token(private_key)
+
+    response = _upload(client, token)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == [
+        {"row": 3, "messages": ["Description is required."]}
+    ]

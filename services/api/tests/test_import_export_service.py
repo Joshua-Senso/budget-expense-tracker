@@ -1,15 +1,25 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
+from io import BytesIO
 from unittest.mock import MagicMock
 
-from openpyxl import load_workbook
+import pytest
+from openpyxl import Workbook, load_workbook
 
 from app.features.expenses.models import Expense
 from app.features.import_export.service import (
     EXPORT_COLUMNS,
+    ImportValidationError,
+    WorkbookParseError,
+    _InsertPlan,
+    _UpdatePlan,
+    apply_import_plan,
     build_export_workbook,
+    build_import_plan,
     build_year_export_rows,
     export_filename,
+    import_workbook,
+    read_import_rows,
 )
 from app.features.recurring.models import RecurringExpense
 
@@ -184,3 +194,513 @@ def test_export_filename_includes_year_and_current_date() -> None:
     assert (
         export_filename(2026, today=date(2026, 7, 5)) == "expenses-2026-2026-07-05.xlsx"
     )
+
+
+# --- read_import_rows ---
+
+
+def _build_xlsx(header: list[str], data_rows: list[list]) -> bytes:
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(header)
+    for row in data_rows:
+        sheet.append(row)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def test_read_import_rows_parses_xlsx() -> None:
+    file_bytes = _build_xlsx(
+        EXPORT_COLUMNS,
+        [
+            ["exp-1", "recorded", "Food", "Lunch", "150.00", "PHP", date(2026, 1, 5)]
+            + [None] * (len(EXPORT_COLUMNS) - 7)
+        ],
+    )
+
+    rows = read_import_rows(file_bytes, "expenses.xlsx")
+
+    assert len(rows) == 1
+    assert rows[0]["Row ID"] == "exp-1"
+    assert rows[0]["Description"] == "Lunch"
+    assert rows[0]["_row_number"] == 2
+
+
+def test_read_import_rows_skips_blank_rows() -> None:
+    file_bytes = _build_xlsx(
+        EXPORT_COLUMNS,
+        [
+            [None] * len(EXPORT_COLUMNS),
+            ["exp-1", "recorded", "Food", "Lunch", "150.00", "PHP", date(2026, 1, 5)]
+            + [None] * (len(EXPORT_COLUMNS) - 7),
+        ],
+    )
+
+    rows = read_import_rows(file_bytes, "expenses.xlsx")
+
+    assert len(rows) == 1
+    assert rows[0]["_row_number"] == 3
+
+
+def test_read_import_rows_rejects_missing_required_columns() -> None:
+    file_bytes = _build_xlsx(["Row ID", "Description"], [["exp-1", "Lunch"]])
+
+    with pytest.raises(WorkbookParseError, match="Missing required columns"):
+        read_import_rows(file_bytes, "expenses.xlsx")
+
+
+def test_read_import_rows_rejects_unreadable_file() -> None:
+    with pytest.raises(WorkbookParseError, match="Could not read"):
+        read_import_rows(b"not-a-real-workbook", "expenses.xlsx")
+
+
+def test_read_import_rows_rejects_unsupported_extension() -> None:
+    with pytest.raises(WorkbookParseError, match="Unsupported file type"):
+        read_import_rows(b"whatever", "expenses.csv")
+
+
+def test_read_import_rows_rejects_duplicate_columns() -> None:
+    header = [*EXPORT_COLUMNS, "Amount"]
+    file_bytes = _build_xlsx(header, [["exp-1", "recorded", "Food", "Lunch", "150.00"]])
+
+    with pytest.raises(WorkbookParseError, match="Duplicate columns"):
+        read_import_rows(file_bytes, "expenses.xlsx")
+
+
+def _build_xls(header: list[str], data_rows: list[list]) -> bytes:
+    import xlwt
+
+    workbook = xlwt.Workbook()
+    sheet = workbook.add_sheet("Expenses")
+    date_style = xlwt.easyxf(num_format_str="YYYY-MM-DD")
+    for col, value in enumerate(header):
+        sheet.write(0, col, value)
+    for row_index, row in enumerate(data_rows, start=1):
+        for col, value in enumerate(row):
+            if isinstance(value, date):
+                sheet.write(row_index, col, value, date_style)
+            else:
+                sheet.write(row_index, col, value)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def test_read_import_rows_parses_legacy_xls() -> None:
+    file_bytes = _build_xls(
+        EXPORT_COLUMNS,
+        [
+            ["exp-1", "recorded", "Food", "Lunch", "150.00", "PHP", date(2026, 1, 5)]
+            + [""] * (len(EXPORT_COLUMNS) - 7)
+        ],
+    )
+
+    rows = read_import_rows(file_bytes, "expenses.xls")
+
+    assert len(rows) == 1
+    assert rows[0]["Row ID"] == "exp-1"
+    assert rows[0]["Description"] == "Lunch"
+    assert rows[0]["Date"] == datetime(2026, 1, 5)
+    assert rows[0]["_row_number"] == 2
+
+
+# --- build_import_plan ---
+
+
+def _row(row_number: int = 2, **overrides) -> dict:
+    defaults = {
+        "Row ID": None,
+        "Row Type": "recorded",
+        "Category": "Food",
+        "Description": "Lunch",
+        "Amount": "150.00",
+        "Currency": "PHP",
+        "Date": date(2026, 1, 5),
+        "Category ID": None,
+        "Recurring Expense ID": None,
+        "Installment Group ID": None,
+        "Installment Index": None,
+        "Installment Total": None,
+        "Original Description": None,
+        "_row_number": row_number,
+    }
+    defaults.update(overrides)
+    return defaults
+
+
+def test_build_import_plan_inserts_row_without_row_id() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    inserts, updates, delete_ids, errors = build_import_plan(
+        db, "user-1", [_row()], 2026
+    )
+
+    assert errors == []
+    assert updates == []
+    assert delete_ids == set()
+    assert len(inserts) == 1
+    assert inserts[0].category_id == "cat-1"
+    assert inserts[0].description == "Lunch"
+    assert inserts[0].amount == Decimal("150.00")
+    assert inserts[0].currency == "PHP"
+    assert inserts[0].spent_on == date(2026, 1, 5)
+
+
+def test_build_import_plan_updates_existing_row() -> None:
+    db = _mock_db()
+    expense = _make_expense(id="exp-1", category_id="cat-1", spent_on=date(2026, 1, 5))
+    _queue_db(db, [("Food", "cat-1")], [expense])
+
+    inserts, updates, delete_ids, errors = build_import_plan(
+        db,
+        "user-1",
+        [_row(**{"Row ID": "exp-1", "Description": "Brunch"})],
+        2026,
+    )
+
+    assert errors == []
+    assert inserts == []
+    assert delete_ids == set()
+    assert len(updates) == 1
+    assert updates[0].expense is expense
+    assert updates[0].description == "Brunch"
+
+
+def test_build_import_plan_deletes_rows_missing_from_upload() -> None:
+    db = _mock_db()
+    expense = _make_expense(id="exp-1", category_id="cat-1", spent_on=date(2026, 1, 5))
+    _queue_db(db, [("Food", "cat-1")], [expense])
+
+    inserts, updates, delete_ids, errors = build_import_plan(db, "user-1", [], 2026)
+
+    assert errors == []
+    assert inserts == []
+    assert updates == []
+    assert delete_ids == {"exp-1"}
+
+
+def test_build_import_plan_deletes_whole_installment_group_when_all_rows_omitted() -> (
+    None
+):
+    db = _mock_db()
+    member_1 = _make_expense(
+        id="exp-1",
+        category_id="cat-1",
+        spent_on=date(2026, 1, 5),
+        installment_group_id="grp-1",
+        installment_index=1,
+        installment_total=2,
+        original_description="TV",
+    )
+    member_2 = _make_expense(
+        id="exp-2",
+        category_id="cat-1",
+        spent_on=date(2026, 2, 5),
+        installment_group_id="grp-1",
+        installment_index=2,
+        installment_total=2,
+        original_description="TV",
+    )
+    _queue_db(db, [("Food", "cat-1")], [member_1, member_2])
+
+    inserts, updates, delete_ids, errors = build_import_plan(db, "user-1", [], 2026)
+
+    assert errors == []
+    assert delete_ids == {"exp-1", "exp-2"}
+
+
+def test_build_import_plan_ignores_projected_rows() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Row Type": "projected", "Row ID": None})
+    inserts, updates, delete_ids, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert inserts == []
+    assert updates == []
+    assert delete_ids == set()
+    assert errors == []
+
+
+def test_build_import_plan_rejects_blank_description() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    _, _, _, errors = build_import_plan(
+        db, "user-1", [_row(**{"Description": "  "})], 2026
+    )
+
+    assert len(errors) == 1
+    assert "Description is required." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_invalid_amount() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    _, _, _, errors = build_import_plan(
+        db, "user-1", [_row(**{"Amount": "not-a-number"})], 2026
+    )
+
+    assert len(errors) == 1
+    assert "Amount must be a valid number." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_non_positive_amount() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    _, _, _, errors = build_import_plan(db, "user-1", [_row(**{"Amount": "-5"})], 2026)
+
+    assert len(errors) == 1
+    assert errors[0]["messages"] == ["amount must be positive"]
+
+
+def test_build_import_plan_rejects_invalid_currency() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    _, _, _, errors = build_import_plan(
+        db, "user-1", [_row(**{"Currency": "philippine pesos"})], 2026
+    )
+
+    assert len(errors) == 1
+    assert "3-letter ISO 4217 code" in errors[0]["messages"][0]
+
+
+def test_build_import_plan_rejects_invalid_date() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    _, _, _, errors = build_import_plan(
+        db, "user-1", [_row(**{"Date": "not-a-date"})], 2026
+    )
+
+    assert len(errors) == 1
+    assert "Date must be a valid date" in errors[0]["messages"][0]
+
+
+def test_build_import_plan_rejects_unknown_category() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    _, _, _, errors = build_import_plan(
+        db, "user-1", [_row(**{"Category": "Mystery"})], 2026
+    )
+
+    assert len(errors) == 1
+    assert "Unknown category 'Mystery'." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_unknown_row_id() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    _, _, _, errors = build_import_plan(
+        db, "user-1", [_row(**{"Row ID": "ghost"})], 2026
+    )
+
+    assert len(errors) == 1
+    assert "Row ID 'ghost' was not found." in errors[0]["messages"]
+
+
+def test_build_import_plan_scopes_expense_lookup_to_the_target_year() -> None:
+    """A Row ID belonging to a different year is rejected, not silently updated.
+
+    build_import_plan only ever sees expenses the DB query already scoped to
+    `year`, so a Row ID copied in from another year's export can't match here
+    -- this asserts the query itself carries that year filter.
+    """
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    build_import_plan(db, "user-1", [_row(**{"Row ID": "exp-other-year"})], 2026)
+
+    expenses_query = db.execute.call_args_list[1][0][0]
+    assert "spent_on BETWEEN" in str(expenses_query)
+
+
+def test_build_import_plan_rejects_duplicate_row_id() -> None:
+    db = _mock_db()
+    expense = _make_expense(id="exp-1", category_id="cat-1", spent_on=date(2026, 1, 5))
+    _queue_db(db, [("Food", "cat-1")], [expense])
+
+    rows = [
+        _row(row_number=2, **{"Row ID": "exp-1"}),
+        _row(row_number=3, **{"Row ID": "exp-1"}),
+    ]
+    _, updates, _, errors = build_import_plan(db, "user-1", rows, 2026)
+
+    assert len(updates) == 1
+    assert len(errors) == 1
+    assert errors[0]["row"] == 3
+    assert "listed more than once" in errors[0]["messages"][0]
+
+
+def test_build_import_plan_rejects_system_column_set_on_insert() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Installment Group ID": "grp-new"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Installment Group ID must be blank for a new row." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_system_column_changed_on_update() -> None:
+    db = _mock_db()
+    expense = _make_expense(
+        id="exp-1",
+        category_id="cat-1",
+        spent_on=date(2026, 1, 5),
+        installment_group_id="grp-1",
+        installment_index=1,
+        installment_total=2,
+        original_description="TV",
+    )
+    _queue_db(db, [("Food", "cat-1")], [expense])
+
+    row = _row(
+        **{
+            "Row ID": "exp-1",
+            "Installment Group ID": "grp-1",
+            "Installment Index": 99,
+            "Installment Total": 2,
+            "Original Description": "TV",
+        }
+    )
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert errors[0]["messages"] == [
+        "Installment Index cannot be changed (it is system-managed)."
+    ]
+
+
+def test_build_import_plan_allows_update_when_system_columns_untouched() -> None:
+    db = _mock_db()
+    expense = _make_expense(
+        id="exp-1",
+        category_id="cat-1",
+        spent_on=date(2026, 1, 5),
+        installment_group_id="grp-1",
+        installment_index=1,
+        installment_total=2,
+        original_description="TV",
+    )
+    _queue_db(db, [("Food", "cat-1")], [expense])
+
+    row = _row(
+        **{
+            "Row ID": "exp-1",
+            "Installment Group ID": "grp-1",
+            "Installment Index": 1,
+            "Installment Total": 2,
+            "Original Description": "TV",
+        }
+    )
+    _, updates, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert errors == []
+    assert len(updates) == 1
+
+
+# --- apply_import_plan ---
+
+
+def test_apply_import_plan_inserts_updates_and_deletes() -> None:
+    db = _mock_db()
+    expense = _make_expense(id="exp-1", category_id="cat-1", description="Old")
+    _queue_db(db, [])  # the bulk-delete statement's execute() call
+
+    inserts = [
+        _InsertPlan("cat-1", "New expense", Decimal("10.00"), "PHP", date(2026, 1, 1))
+    ]
+    updates = [
+        _UpdatePlan(
+            expense, "cat-2", "Updated", Decimal("20.00"), "USD", date(2026, 2, 1)
+        )
+    ]
+    delete_ids = {"exp-old"}
+
+    summary = apply_import_plan(db, "user-1", inserts, updates, delete_ids)
+
+    assert summary.inserted == 1
+    assert summary.updated == 1
+    assert summary.deleted == 1
+    db.add.assert_called_once()
+    added_expense = db.add.call_args[0][0]
+    assert added_expense.description == "New expense"
+    assert expense.category_id == "cat-2"
+    assert expense.description == "Updated"
+    assert expense.amount == Decimal("20.00")
+    assert expense.currency == "USD"
+    assert expense.spent_on == date(2026, 2, 1)
+    db.commit.assert_called_once()
+
+
+def test_apply_import_plan_skips_delete_statement_when_nothing_to_delete() -> None:
+    db = _mock_db()
+
+    summary = apply_import_plan(db, "user-1", [], [], set())
+
+    db.execute.assert_not_called()
+    db.commit.assert_called_once()
+    assert summary.inserted == 0
+    assert summary.updated == 0
+    assert summary.deleted == 0
+
+
+def test_apply_import_plan_rolls_back_and_raises_on_db_conflict() -> None:
+    from sqlalchemy.exc import IntegrityError
+
+    db = _mock_db()
+    db.commit.side_effect = IntegrityError("stmt", {}, Exception("conflict"))
+
+    with pytest.raises(ImportValidationError) as exc_info:
+        apply_import_plan(db, "user-1", [], [], set())
+
+    db.rollback.assert_called_once()
+    assert exc_info.value.errors[0]["row"] == 0
+
+
+# --- import_workbook ---
+
+
+def test_import_workbook_raises_validation_error_and_writes_nothing() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+    file_bytes = _build_xlsx(
+        EXPORT_COLUMNS,
+        [
+            [None, "recorded", "Food", "", "150.00", "PHP", date(2026, 1, 5)]
+            + [None] * (len(EXPORT_COLUMNS) - 7)
+        ],
+    )
+
+    with pytest.raises(ImportValidationError) as exc_info:
+        import_workbook(db, "user-1", file_bytes, "expenses.xlsx", 2026)
+
+    assert exc_info.value.errors[0]["row"] == 2
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_import_workbook_applies_valid_plan() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+    file_bytes = _build_xlsx(
+        EXPORT_COLUMNS,
+        [
+            [None, "recorded", "Food", "Lunch", "150.00", "PHP", date(2026, 1, 5)]
+            + [None] * (len(EXPORT_COLUMNS) - 7)
+        ],
+    )
+
+    summary = import_workbook(db, "user-1", file_bytes, "expenses.xlsx", 2026)
+
+    assert summary.inserted == 1
+    db.commit.assert_called_once()
