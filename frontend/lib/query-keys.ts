@@ -58,6 +58,11 @@ const queryKeys = {
     [...queryKeys.all, "attachments", expenseId] as const,
   attachmentDownloadUrl: (expenseId: string, attachmentId: string) =>
     [...queryKeys.all, "attachments", expenseId, attachmentId, "download-url"] as const,
+  householdMembers: (householdId: string) =>
+    [...queryKeys.all, "households", householdId, "members"] as const,
+  householdInvitations: (householdId: string) =>
+    [...queryKeys.all, "households", householdId, "invitations"] as const,
+  userInvitations: () => [...queryKeys.all, "households", "user-invitations"] as const,
 }
 
 export { queryKeys }
