@@ -32,6 +32,12 @@ function AppShell({ children }: { children: ReactNode }) {
             >
               Categories
             </Link>
+            <Link
+              href="/settings"
+              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Settings
+            </Link>
           </div>
           <div className="flex items-center gap-3">
             <WorkspaceSwitcher />

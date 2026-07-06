@@ -2,6 +2,7 @@
 
 import * as React from "react"
 
+import { Badge } from "@/components/ui/badge"
 import {
   Select,
   SelectContent,
@@ -38,24 +39,31 @@ function WorkspaceSwitcher() {
   }, [activeWorkspaceId, households, isPending, error, setActiveWorkspace])
 
   return (
-    <Select
-      value={activeWorkspaceId ?? PERSONAL_VALUE}
-      onValueChange={(value) =>
-        setActiveWorkspace({ id: value === PERSONAL_VALUE ? null : value })
-      }
-    >
-      <SelectTrigger className="w-[180px]" size="sm" aria-label="Active workspace">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value={PERSONAL_VALUE}>Personal</SelectItem>
-        {households?.map((household) => (
-          <SelectItem key={household.id} value={household.id}>
-            {household.name}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <div className="flex items-center gap-2">
+      <Select
+        value={activeWorkspaceId ?? PERSONAL_VALUE}
+        onValueChange={(value) =>
+          setActiveWorkspace({ id: value === PERSONAL_VALUE ? null : value })
+        }
+      >
+        <SelectTrigger className="w-[180px]" size="sm" aria-label="Active workspace">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={PERSONAL_VALUE}>Personal</SelectItem>
+          {households?.map((household) => (
+            <SelectItem key={household.id} value={household.id}>
+              {household.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {activeWorkspaceId && (
+        <Badge variant="secondary" className="shrink-0">
+          Shared
+        </Badge>
+      )}
+    </div>
   )
 }
 
