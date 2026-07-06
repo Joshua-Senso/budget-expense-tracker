@@ -8,7 +8,7 @@ import { useHouseholds, useUserInvitations } from "../api/queries"
 import { useAcceptInvitation, useRejectInvitation } from "../api/mutations"
 
 function ReceivedInvitations() {
-  const { data, isLoading } = useUserInvitations()
+  const { data, isLoading, isError, error: loadError } = useUserInvitations()
   const { refetch: refetchHouseholds } = useHouseholds()
   const acceptInvitation = useAcceptInvitation()
   const rejectInvitation = useRejectInvitation()
@@ -42,7 +42,21 @@ function ReceivedInvitations() {
     }
   }
 
-  if (isLoading || pending.length === 0) {
+  if (isLoading) {
+    return null
+  }
+
+  if (isError) {
+    return (
+      <p className="text-sm text-destructive" role="alert">
+        {loadError instanceof Error
+          ? loadError.message
+          : "Could not load invitations for you."}
+      </p>
+    )
+  }
+
+  if (pending.length === 0) {
     return null
   }
 
