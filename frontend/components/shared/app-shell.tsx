@@ -1,6 +1,8 @@
 import Link from "next/link"
 import type { ReactNode } from "react"
 
+import { WorkspaceSwitcher } from "@/features/households"
+
 import { SignOutButton } from "./sign-out-button"
 
 function AppShell({ children }: { children: ReactNode }) {
@@ -31,7 +33,10 @@ function AppShell({ children }: { children: ReactNode }) {
               Categories
             </Link>
           </div>
-          <SignOutButton />
+          <div className="flex items-center gap-3">
+            <WorkspaceSwitcher />
+            <SignOutButton />
+          </div>
         </nav>
       </header>
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-6 py-8">

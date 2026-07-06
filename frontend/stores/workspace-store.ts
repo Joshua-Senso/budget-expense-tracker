@@ -1,4 +1,5 @@
 import { create } from "zustand"
+import { createJSONStorage, persist } from "zustand/middleware"
 
 type WorkspaceScope = "personal" | "household"
 
@@ -11,13 +12,21 @@ type WorkspaceState = {
   }) => void
 }
 
-const useWorkspaceStore = create<WorkspaceState>((set) => ({
-  activeWorkspaceId: null,
-  activeWorkspaceScope: "personal",
-  setActiveWorkspace: ({ id, scope = id ? "household" : "personal" }) => {
-    set({ activeWorkspaceId: id, activeWorkspaceScope: scope })
-  },
-}))
+const useWorkspaceStore = create<WorkspaceState>()(
+  persist(
+    (set) => ({
+      activeWorkspaceId: null,
+      activeWorkspaceScope: "personal",
+      setActiveWorkspace: ({ id, scope = id ? "household" : "personal" }) => {
+        set({ activeWorkspaceId: id, activeWorkspaceScope: scope })
+      },
+    }),
+    {
+      name: "active-workspace",
+      storage: createJSONStorage(() => localStorage),
+    },
+  ),
+)
 
 export { useWorkspaceStore }
 export type { WorkspaceScope, WorkspaceState }

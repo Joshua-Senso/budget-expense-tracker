@@ -4,6 +4,7 @@ import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 
 import { authClient } from "@/lib/auth-client"
+import { useWorkspaceStore } from "@/stores/workspace-store"
 
 const IDLE_MS = 30 * 60 * 1000
 const THROTTLE_MS = 1_000
@@ -27,6 +28,7 @@ export function useIdleSignout({ enabled }: { enabled: boolean }) {
       try {
         await authClient.signOut()
       } finally {
+        useWorkspaceStore.getState().setActiveWorkspace({ id: null })
         router.replace("/sign-in")
       }
     }

@@ -5,6 +5,7 @@ import type { QueryClient } from "@tanstack/react-query"
 
 import { apiFetch } from "@/lib/api-client"
 import { queryKeys } from "@/lib/query-keys"
+import { useWorkspaceStore } from "@/stores/workspace-store"
 
 import type { RecurringCreatePayload, RecurringExpense } from "../schemas"
 
@@ -17,10 +18,14 @@ function invalidateRecurringDependents(queryClient: QueryClient) {
 
 function useCreateRecurringExpense() {
   const queryClient = useQueryClient()
+  const householdId = useWorkspaceStore((state) => state.activeWorkspaceId)
 
   return useMutation({
     mutationFn: (data: RecurringCreatePayload) =>
-      apiFetch<RecurringExpense>("/recurring", { method: "POST", body: data }),
+      apiFetch<RecurringExpense>("/recurring", {
+        method: "POST",
+        body: { ...data, household_id: householdId },
+      }),
     onSuccess: () => invalidateRecurringDependents(queryClient),
   })
 }

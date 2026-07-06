@@ -32,6 +32,21 @@ function shouldSerializeJsonBody(body: ApiRequestOptions["body"]) {
   )
 }
 
+function buildSearchParams(
+  params: Record<string, string | number | null | undefined>,
+) {
+  const search = new URLSearchParams()
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== null && value !== undefined) {
+      search.set(key, String(value))
+    }
+  }
+
+  const query = search.toString()
+  return query ? `?${query}` : ""
+}
+
 function buildApiUrl(path: string) {
   if (!apiBaseUrl) {
     throw new Error("NEXT_PUBLIC_API_URL is required")
@@ -129,5 +144,5 @@ async function apiFetchBlob(path: string, options: ApiRequestOptions = {}) {
   return { blob: await response.blob(), filename: filenameFromContentDisposition(response) }
 }
 
-export { ApiError, apiFetch, apiFetchBlob }
+export { ApiError, apiFetch, apiFetchBlob, buildSearchParams }
 export type { ApiRequestOptions }
