@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label"
 
 import { householdSchema, type HouseholdFormValues } from "../schemas"
 import { useCreateHousehold } from "../api/mutations"
+import { useHouseholds } from "../api/queries"
 
 function slugify(name: string) {
   return name
@@ -38,6 +39,7 @@ function CreateHouseholdForm({
   onSuccess: (householdId: string) => void
 }) {
   const create = useCreateHousehold()
+  const { refetch: refetchHouseholds } = useHouseholds()
   const [apiError, setApiError] = useState<string | null>(null)
   const [slugTouched, setSlugTouched] = useState(false)
 
@@ -57,6 +59,11 @@ function CreateHouseholdForm({
     setApiError(null)
     try {
       const household = await create.mutateAsync(data)
+      // Better Auth's own $listOrg atom listener refreshes `useListOrganizations()`
+      // in the background on a short delay, which races the immediate selection
+      // below. Refetch explicitly so the new household is guaranteed to be in
+      // `households` before we select it.
+      await refetchHouseholds()
       onSuccess((household as { id: string }).id)
     } catch {
       setApiError(
