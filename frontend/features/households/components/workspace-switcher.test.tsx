@@ -86,7 +86,7 @@ test("does not reset the active household while it is still loading", () => {
   })
 })
 
-test("falls back to personal scope if the household list fails to load", async () => {
+test("keeps the active household selection if the household list fails to load", () => {
   useWorkspaceStore.getState().setActiveWorkspace({ id: "house-1" })
   householdMocks.useListOrganizations.mockReturnValue({
     data: undefined,
@@ -96,10 +96,8 @@ test("falls back to personal scope if the household list fails to load", async (
 
   render(<WorkspaceSwitcher />)
 
-  await waitFor(() => {
-    expect(useWorkspaceStore.getState()).toMatchObject({
-      activeWorkspaceId: null,
-      activeWorkspaceScope: "personal",
-    })
+  expect(useWorkspaceStore.getState()).toMatchObject({
+    activeWorkspaceId: "house-1",
+    activeWorkspaceScope: "household",
   })
 })

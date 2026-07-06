@@ -16,16 +16,18 @@ import { useHouseholds } from "../api/queries"
 const PERSONAL_VALUE = "personal"
 
 function WorkspaceSwitcher() {
-  const { households, isPending } = useHouseholds()
+  const { households, isPending, error } = useHouseholds()
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId)
   const setActiveWorkspace = useWorkspaceStore((state) => state.setActiveWorkspace)
 
   React.useEffect(() => {
-    // Wait for the list to settle before judging membership -- while it's
-    // still loading, `households` and "fetch errored" are indistinguishable
-    // (both read as null), so a stale selection must not be cleared yet, and
-    // must not be trusted forever if the fetch keeps failing.
-    if (isPending) return
+    // Only clear a persisted selection once we've positively confirmed (a
+    // successful load) that the household is gone. While still loading, or
+    // if the fetch failed, `households` reads as null the same way an empty
+    // list would -- treating that as "not a member anymore" would silently
+    // drop the user to Personal (and misroute their next create) on every
+    // transient network hiccup, not just a real removal.
+    if (isPending || error) return
 
     if (
       activeWorkspaceId &&
@@ -33,7 +35,7 @@ function WorkspaceSwitcher() {
     ) {
       setActiveWorkspace({ id: null })
     }
-  }, [activeWorkspaceId, households, isPending, setActiveWorkspace])
+  }, [activeWorkspaceId, households, isPending, error, setActiveWorkspace])
 
   return (
     <Select
