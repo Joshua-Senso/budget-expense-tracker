@@ -53,6 +53,8 @@ export type Expense = Omit<ExpensePayload, "amount"> & {
   id: string
   user_id: string
   amount: string
+  base_amount: string
+  exchange_rate: string
   installment_group_id: string | null
   installment_index: number | null
   installment_total: number | null

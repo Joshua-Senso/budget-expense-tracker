@@ -31,7 +31,13 @@ function getUsageTone(percentUsed: number | null): UsageTone {
   return "neutral"
 }
 
-function CategoryRow({ category }: { category: CategoryBreakdown }) {
+function CategoryRow({
+  category,
+  baseCurrency,
+}: {
+  category: CategoryBreakdown
+  baseCurrency: string
+}) {
   return (
     <li className="flex items-center gap-2 text-sm">
       <CategoryColor color={category.color} className="size-3" />
@@ -39,7 +45,7 @@ function CategoryRow({ category }: { category: CategoryBreakdown }) {
         {category.name}
       </span>
       <span className="font-medium">
-        {formatCurrency(category.total, "PHP")}
+        {formatCurrency(category.total, baseCurrency)}
       </span>
     </li>
   )
@@ -48,9 +54,10 @@ function CategoryRow({ category }: { category: CategoryBreakdown }) {
 interface GroupCardProps {
   title: string
   group: ExpenseGroupBreakdown
+  baseCurrency: string
 }
 
-function GroupCard({ title, group }: GroupCardProps) {
+function GroupCard({ title, group, baseCurrency }: GroupCardProps) {
   return (
     <div className="flex flex-col gap-3 rounded-3xl border bg-card p-5 shadow-sm">
       <div className="flex items-baseline justify-between">
@@ -58,7 +65,7 @@ function GroupCard({ title, group }: GroupCardProps) {
           {title}
         </h3>
         <span className="text-xl font-semibold">
-          {formatCurrency(group.total, "PHP")}
+          {formatCurrency(group.total, baseCurrency)}
         </span>
       </div>
 
@@ -69,7 +76,11 @@ function GroupCard({ title, group }: GroupCardProps) {
       ) : (
         <ul className="flex flex-col gap-1.5">
           {group.categories.map((category) => (
-            <CategoryRow key={category.category_id} category={category} />
+            <CategoryRow
+              key={category.category_id}
+              category={category}
+              baseCurrency={baseCurrency}
+            />
           ))}
         </ul>
       )}
@@ -105,7 +116,7 @@ function BudgetSummary({ summary }: { summary: DashboardSummaryData }) {
                 tone === "over" && "text-destructive"
               )}
             >
-              {formatCurrency(summary.remaining ?? "0", "PHP")}
+              {formatCurrency(summary.remaining ?? "0", summary.base_currency)}
             </span>
           </div>
 
@@ -165,8 +176,16 @@ function DashboardSummary() {
   return (
     <div className="flex flex-col gap-4">
       <div className="grid gap-4 sm:grid-cols-2">
-        <GroupCard title="Card" group={summary.card} />
-        <GroupCard title="Other" group={summary.other} />
+        <GroupCard
+          title="Card"
+          group={summary.card}
+          baseCurrency={summary.base_currency}
+        />
+        <GroupCard
+          title="Other"
+          group={summary.other}
+          baseCurrency={summary.base_currency}
+        />
       </div>
       <BudgetSummary summary={summary} />
     </div>

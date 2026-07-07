@@ -18,6 +18,7 @@ export type DashboardSummaryData = {
   monthly_net_salary: string | null
   remaining: string | null
   percent_used: string | null
+  base_currency: string
 }
 
 export type MonthlyOverview = {
@@ -32,4 +33,5 @@ export type YearlyOverviewData = {
   year: number
   months: MonthlyOverview[]
   year_total: string
+  base_currency: string
 }
