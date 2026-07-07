@@ -17,12 +17,18 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.create_check_constraint(
-        "ck_expenses_currency_valid",
-        "expenses",
-        "currency IN ('AED', 'AUD', 'CAD', 'CHF', 'CNY', 'EUR', 'GBP', 'HKD', "
-        "'IDR', 'INR', 'JPY', 'KRW', 'MYR', 'NZD', 'PHP', 'SAR', 'SGD', 'THB', "
-        "'USD', 'VND')",
+    # NOT VALID: before this migration any 3-letter uppercase code was
+    # accepted, so existing rows may hold a currency outside this whitelist
+    # (e.g. MXN, TWD). NOT VALID skips scanning existing rows, so the upgrade
+    # can't fail on legacy data -- it still fully enforces the check on every
+    # new insert/update from this point on. Once existing rows are audited
+    # and cleaned up, run:
+    #   ALTER TABLE expenses VALIDATE CONSTRAINT ck_expenses_currency_valid;
+    op.execute(
+        "ALTER TABLE expenses ADD CONSTRAINT ck_expenses_currency_valid "
+        "CHECK (currency IN ('AED', 'AUD', 'CAD', 'CHF', 'CNY', 'EUR', 'GBP', "
+        "'HKD', 'IDR', 'INR', 'JPY', 'KRW', 'MYR', 'NZD', 'PHP', 'SAR', 'SGD', "
+        "'THB', 'USD', 'VND')) NOT VALID"
     )
 
 

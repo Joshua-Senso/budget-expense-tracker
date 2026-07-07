@@ -17,12 +17,17 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.create_check_constraint(
-        "ck_recurring_expenses_currency_valid",
-        "recurring_expenses",
-        "currency IN ('AED', 'AUD', 'CAD', 'CHF', 'CNY', 'EUR', 'GBP', 'HKD', "
-        "'IDR', 'INR', 'JPY', 'KRW', 'MYR', 'NZD', 'PHP', 'SAR', 'SGD', 'THB', "
-        "'USD', 'VND')",
+    # NOT VALID: see the matching comment in 010 -- existing rows may hold a
+    # currency outside this whitelist, so skip scanning them; new/updated
+    # rows are still fully enforced. Once existing rows are audited and
+    # cleaned up, run:
+    #   ALTER TABLE recurring_expenses VALIDATE CONSTRAINT ck_recurring_expenses_currency_valid;
+    op.execute(
+        "ALTER TABLE recurring_expenses ADD CONSTRAINT "
+        "ck_recurring_expenses_currency_valid "
+        "CHECK (currency IN ('AED', 'AUD', 'CAD', 'CHF', 'CNY', 'EUR', 'GBP', "
+        "'HKD', 'IDR', 'INR', 'JPY', 'KRW', 'MYR', 'NZD', 'PHP', 'SAR', 'SGD', "
+        "'THB', 'USD', 'VND')) NOT VALID"
     )
 
 
