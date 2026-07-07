@@ -19,6 +19,7 @@ class ExchangeRateUpsert(BaseModel):
     from_currency: str
     to_currency: str
     rate: Decimal
+    household_id: str | None = None
 
     @field_validator("from_currency", "to_currency")
     @classmethod
@@ -41,6 +42,8 @@ class ExchangeRateUpsert(BaseModel):
 
 class ExchangeRateResponse(BaseModel):
     id: str
+    user_id: str
+    household_id: str | None = None
     from_currency: str
     to_currency: str
     rate: Decimal

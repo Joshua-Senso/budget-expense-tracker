@@ -535,7 +535,9 @@ def _convert_for_import(
     base_currency = resolve_base_currency(
         db, user_id, month_key_for(spent_on), household_id=None
     )
-    exchange_rate = resolve_exchange_rate(db, currency, base_currency, None)
+    exchange_rate = resolve_exchange_rate(
+        db, user_id, None, currency, base_currency, None
+    )
     return convert_to_base_or_unconverted(
         amount, currency, base_currency, exchange_rate=exchange_rate
     )

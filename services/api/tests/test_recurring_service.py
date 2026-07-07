@@ -41,7 +41,9 @@ def _no_stored_exchange_rate_by_default(monkeypatch: pytest.MonkeyPatch) -> None
     Fallback-specific tests override this per-test."""
     monkeypatch.setattr(
         "app.features.recurring.service.resolve_exchange_rate",
-        lambda db, currency, base_currency, exchange_rate: exchange_rate,
+        lambda db, user_id, household_id, currency, base_currency, exchange_rate: (
+            exchange_rate
+        ),
     )
 
 
@@ -124,7 +126,9 @@ def test_create_recurring_expense_uses_stored_manual_rate_when_none_supplied(
     rate for the pair is used instead of raising."""
     monkeypatch.setattr(
         "app.features.recurring.service.resolve_exchange_rate",
-        lambda db, currency, base_currency, exchange_rate: Decimal("56.00"),
+        lambda db, user_id, household_id, currency, base_currency, exchange_rate: (
+            Decimal("56.00")
+        ),
     )
     db = _mock_db()
     db.scalar.return_value = "cat-1"
@@ -372,7 +376,9 @@ def test_generate_recurring_expenses_uses_stored_manual_rate_after_base_currency
     )
     monkeypatch.setattr(
         "app.features.recurring.service.resolve_exchange_rate",
-        lambda db, currency, base_currency, exchange_rate: Decimal("0.92"),
+        lambda db, user_id, household_id, currency, base_currency, exchange_rate: (
+            Decimal("0.92")
+        ),
     )
     db = _mock_db()
     rule = _make_rule(

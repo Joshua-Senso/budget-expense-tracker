@@ -90,7 +90,9 @@ def _no_stored_exchange_rate_by_default(monkeypatch: pytest.MonkeyPatch) -> None
     Fallback-specific tests override this per-test."""
     monkeypatch.setattr(
         "app.features.import_export.service.resolve_exchange_rate",
-        lambda db, currency, base_currency, exchange_rate: exchange_rate,
+        lambda db, user_id, household_id, currency, base_currency, exchange_rate: (
+            exchange_rate
+        ),
     )
 
 
@@ -694,7 +696,9 @@ def test_apply_import_plan_uses_stored_manual_rate_for_cross_currency_row(
     recording the row unconverted."""
     monkeypatch.setattr(
         "app.features.import_export.service.resolve_exchange_rate",
-        lambda db, currency, base_currency, exchange_rate: Decimal("56.00"),
+        lambda db, user_id, household_id, currency, base_currency, exchange_rate: (
+            Decimal("56.00")
+        ),
     )
     db = _mock_db()
 

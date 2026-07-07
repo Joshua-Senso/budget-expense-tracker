@@ -85,7 +85,9 @@ def create_expense(
     base_currency = resolve_base_currency(
         db, user_id, month_key_for(spent_on), household_id
     )
-    exchange_rate = resolve_exchange_rate(db, currency, base_currency, exchange_rate)
+    exchange_rate = resolve_exchange_rate(
+        db, user_id, household_id, currency, base_currency, exchange_rate
+    )
     base_amount, exchange_rate = convert_to_base(
         amount, currency, base_currency, exchange_rate
     )
@@ -137,7 +139,9 @@ def create_installment_expenses(
     base_currency = resolve_base_currency(
         db, user_id, month_key_for(spent_on), household_id
     )
-    exchange_rate = resolve_exchange_rate(db, currency, base_currency, exchange_rate)
+    exchange_rate = resolve_exchange_rate(
+        db, user_id, household_id, currency, base_currency, exchange_rate
+    )
     base_amount, stored_rate = convert_to_base(
         amount, currency, base_currency, exchange_rate
     )
@@ -226,7 +230,12 @@ def update_expense(
             db, user_id, month_key_for(expense.spent_on), expense.household_id
         )
         exchange_rate = resolve_exchange_rate(
-            db, expense.currency, base_currency, exchange_rate
+            db,
+            user_id,
+            expense.household_id,
+            expense.currency,
+            base_currency,
+            exchange_rate,
         )
         expense.base_amount, expense.exchange_rate = convert_to_base(
             expense.amount, expense.currency, base_currency, exchange_rate

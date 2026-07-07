@@ -27,6 +27,8 @@ def upgrade() -> None:
     op.create_table(
         "exchange_rates",
         sa.Column("id", sa.String(), nullable=False),
+        sa.Column("user_id", sa.String(), nullable=False),
+        sa.Column("household_id", sa.String(), nullable=True),
         sa.Column("from_currency", sa.String(3), nullable=False),
         sa.Column("to_currency", sa.String(3), nullable=False),
         sa.Column("rate", sa.Numeric(18, 6), nullable=False),
@@ -56,11 +58,26 @@ def upgrade() -> None:
             name="ck_exchange_rates_to_currency_valid",
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "from_currency", "to_currency", name="ux_exchange_rates_currency_pair"
-        ),
+    )
+    op.create_index("ix_exchange_rates_user_id", "exchange_rates", ["user_id"])
+    op.create_index(
+        "ux_exchange_rates_user_pair",
+        "exchange_rates",
+        ["user_id", "from_currency", "to_currency"],
+        unique=True,
+        postgresql_where=sa.text("household_id IS NULL"),
+    )
+    op.create_index(
+        "ux_exchange_rates_household_pair",
+        "exchange_rates",
+        ["household_id", "from_currency", "to_currency"],
+        unique=True,
+        postgresql_where=sa.text("household_id IS NOT NULL"),
     )
 
 
 def downgrade() -> None:
+    op.drop_index("ux_exchange_rates_household_pair", table_name="exchange_rates")
+    op.drop_index("ux_exchange_rates_user_pair", table_name="exchange_rates")
+    op.drop_index("ix_exchange_rates_user_id", table_name="exchange_rates")
     op.drop_table("exchange_rates")

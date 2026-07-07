@@ -5,10 +5,11 @@ from decimal import Decimal
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
+    Index,
     Numeric,
     String,
-    UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,19 +19,12 @@ from app.core.db import Base
 class ExchangeRate(Base):
     """A manually maintained currency-pair rate (BUD-52, PRD §7.10/§12).
 
-    Not user- or household-scoped: a rate is objective reference data shared
-    by everyone converting that pair, and is the fallback conversion inputs
-    reach for when no rate is supplied at entry -- including the
-    non-interactive paths (recurring generation, import) that have no user
-    present to ask.
-
-    Writes are deliberately open to any authenticated user too, not just the
-    household that happens to enter it first: there's no cross-household
-    "admin" role in this app to gate it behind, and a wrong maintained rate
-    is a correctable, low-stakes mistake (edit it again; already-persisted
-    `Expense.base_amount`/`exchange_rate` values are never retroactively
-    recomputed from it). `updated_by` records who last set it for that
-    audit trail.
+    Scoped like `UserCategory`/`Expense`: personal (`user_id`, `household_id`
+    IS NULL) or shared within a household (`household_id` set; any member
+    may read/add, only the owner role may edit/delete -- PRD §10). Each
+    scope maintains its own rates rather than one instance-wide table, so a
+    member of one household can't change or delete the rate that drives
+    another, unrelated household's conversions.
     """
 
     __tablename__ = "exchange_rates"
@@ -38,6 +32,8 @@ class ExchangeRate(Base):
     id: Mapped[str] = mapped_column(
         String, primary_key=True, default=lambda: str(uuid.uuid4())
     )
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    household_id: Mapped[str | None] = mapped_column(String, nullable=True)
     from_currency: Mapped[str] = mapped_column(String(3), nullable=False)
     to_currency: Mapped[str] = mapped_column(String(3), nullable=False)
     rate: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
@@ -70,7 +66,22 @@ class ExchangeRate(Base):
             "'USD', 'VND')",
             name="ck_exchange_rates_to_currency_valid",
         ),
-        UniqueConstraint(
-            "from_currency", "to_currency", name="ux_exchange_rates_currency_pair"
+        # Pair unique within personal scope (no household)
+        Index(
+            "ux_exchange_rates_user_pair",
+            "user_id",
+            "from_currency",
+            "to_currency",
+            unique=True,
+            postgresql_where=text("household_id IS NULL"),
+        ),
+        # Pair unique within household scope
+        Index(
+            "ux_exchange_rates_household_pair",
+            "household_id",
+            "from_currency",
+            "to_currency",
+            unique=True,
+            postgresql_where=text("household_id IS NOT NULL"),
         ),
     )

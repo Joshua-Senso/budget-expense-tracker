@@ -98,7 +98,9 @@ def create_recurring_expense(
     base_currency = resolve_base_currency(
         db, user_id, month_key_for(start_on), household_id
     )
-    exchange_rate = resolve_exchange_rate(db, currency, base_currency, exchange_rate)
+    exchange_rate = resolve_exchange_rate(
+        db, user_id, household_id, currency, base_currency, exchange_rate
+    )
     _, exchange_rate = convert_to_base(amount, currency, base_currency, exchange_rate)
     recurring = RecurringExpense(
         user_id=user_id,
@@ -246,7 +248,12 @@ def generate_recurring_expenses(db: Session, year: int, month: int) -> int:
             db, rule.user_id, month_key_for(spent_on), rule.household_id
         )
         rate = resolve_exchange_rate(
-            db, rule.currency, base_currency, rule.exchange_rate
+            db,
+            rule.user_id,
+            rule.household_id,
+            rule.currency,
+            base_currency,
+            rule.exchange_rate,
         )
         base_amount, exchange_rate = convert_to_base_or_unconverted(
             rule.amount, rule.currency, base_currency, rate
