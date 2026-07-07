@@ -16,6 +16,7 @@ from app.features.currency.service import (
     month_key_for,
     resolve_base_currency,
 )
+from app.features.exchange_rates.service import resolve_exchange_rate
 from app.features.expenses.models import Expense
 from app.features.expenses.schemas import _validate_amount, _validate_currency
 from app.features.import_export.schemas import ImportSummary
@@ -525,16 +526,18 @@ def _convert_for_import(
     db: Session, user_id: str, amount: Decimal, currency: str, spent_on: date
 ) -> tuple[Decimal, Decimal]:
     """Import is personal-scope only and has no interactive moment to
-    capture a rate per row (unlike the create/update endpoints). Preserving
-    currency/conversion faithfully through import is BUD-54's job; for now,
-    fall back to recording the row unconverted rather than failing the whole
-    import when a rate would be required.
+    capture a rate per row (unlike the create/update endpoints). Falls back
+    to a manually maintained rate for the pair (BUD-52), then to recording
+    the row unconverted rather than failing the whole import when a rate
+    would be required. Preserving currency/conversion faithfully through
+    import is BUD-54's job.
     """
     base_currency = resolve_base_currency(
         db, user_id, month_key_for(spent_on), household_id=None
     )
+    exchange_rate = resolve_exchange_rate(db, currency, base_currency, None)
     return convert_to_base_or_unconverted(
-        amount, currency, base_currency, exchange_rate=None
+        amount, currency, base_currency, exchange_rate=exchange_rate
     )
 
 

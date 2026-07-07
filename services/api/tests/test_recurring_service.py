@@ -34,6 +34,17 @@ def _default_base_currency(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_stored_exchange_rate_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default the manual-rate lookup (BUD-52) to a pass-through -- no stored
+    rate for any pair -- so existing tests don't need to know about it.
+    Fallback-specific tests override this per-test."""
+    monkeypatch.setattr(
+        "app.features.recurring.service.resolve_exchange_rate",
+        lambda db, currency, base_currency, exchange_rate: exchange_rate,
+    )
+
+
 def _make_rule(**kwargs) -> RecurringExpense:
     defaults = {
         "id": "rec-1",
@@ -104,6 +115,25 @@ def test_create_recurring_expense_requires_rate_when_currency_differs() -> None:
         )
 
     db.add.assert_not_called()
+
+
+def test_create_recurring_expense_uses_stored_manual_rate_when_none_supplied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUD-52: when the caller doesn't supply a rate, a manually maintained
+    rate for the pair is used instead of raising."""
+    monkeypatch.setattr(
+        "app.features.recurring.service.resolve_exchange_rate",
+        lambda db, currency, base_currency, exchange_rate: Decimal("56.00"),
+    )
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+
+    result = create_recurring_expense(
+        db, "user-1", "cat-1", "Netflix", Decimal("10"), "USD", date(2026, 1, 15)
+    )
+
+    assert result.exchange_rate == Decimal("56.00")
 
 
 def test_create_recurring_expense_category_not_owned_raises() -> None:
@@ -327,6 +357,39 @@ def test_generate_recurring_expenses_falls_back_when_rate_missing_after_base_cur
     added = db.add.call_args[0][0]
     assert added.base_amount == rule.amount
     assert added.exchange_rate == Decimal("1")
+
+
+def test_generate_recurring_expenses_uses_stored_manual_rate_after_base_currency_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUD-52: the worker has no user present to supply a rate after a
+    base-currency drift (see the test above for the no-stored-rate case),
+    but it can still use a manually maintained rate for the pair instead of
+    falling all the way back to recording the occurrence unconverted."""
+    monkeypatch.setattr(
+        "app.features.recurring.service.resolve_base_currency",
+        lambda *args, **kwargs: "EUR",
+    )
+    monkeypatch.setattr(
+        "app.features.recurring.service.resolve_exchange_rate",
+        lambda db, currency, base_currency, exchange_rate: Decimal("0.92"),
+    )
+    db = _mock_db()
+    rule = _make_rule(
+        start_on=date(2026, 1, 15),
+        currency="USD",
+        amount=Decimal("10.00"),
+        exchange_rate=None,
+    )
+    db.execute.return_value.scalars.return_value.all.return_value = [rule]
+    db.scalar.side_effect = ["cat-1", None]
+
+    created = generate_recurring_expenses(db, 2026, 7)
+
+    assert created == 1
+    added = db.add.call_args[0][0]
+    assert added.base_amount == Decimal("9.20")
+    assert added.exchange_rate == Decimal("0.92")
 
 
 def test_generate_recurring_expenses_is_idempotent() -> None:
