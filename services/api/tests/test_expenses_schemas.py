@@ -70,6 +70,17 @@ def test_create_currency_too_short_fails() -> None:
         )
 
 
+def test_create_currency_unsupported_code_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseCreate(
+            category_id="cat-1",
+            description="Lunch",
+            amount=Decimal("100"),
+            currency="ZZZ",
+            spent_on=date(2026, 7, 1),
+        )
+
+
 def test_create_description_stripped() -> None:
     e = ExpenseCreate(
         category_id="cat-1",
@@ -220,6 +231,11 @@ def test_update_currency_uppercased() -> None:
 def test_update_currency_too_long_fails() -> None:
     with pytest.raises(ValidationError):
         ExpenseUpdate(currency="euro")
+
+
+def test_update_currency_unsupported_code_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseUpdate(currency="ZZZ")
 
 
 def test_update_amount_quantized_to_2dp() -> None:

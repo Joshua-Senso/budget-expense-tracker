@@ -1,0 +1,37 @@
+"""add recurring expense currency check constraint
+
+Revision ID: 011
+Revises: 010
+Create Date: 2026-07-07
+
+"""
+
+from collections.abc import Sequence
+
+from alembic import op
+
+revision: str = "011"
+down_revision: str | None = "010"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    # NOT VALID: see the matching comment in 010 -- existing rows may hold a
+    # currency outside this whitelist, so skip scanning them; new/updated
+    # rows are still fully enforced. Once existing rows are audited and
+    # cleaned up, run:
+    #   ALTER TABLE recurring_expenses VALIDATE CONSTRAINT ck_recurring_expenses_currency_valid;
+    op.execute(
+        "ALTER TABLE recurring_expenses ADD CONSTRAINT "
+        "ck_recurring_expenses_currency_valid "
+        "CHECK (currency IN ('AED', 'AUD', 'CAD', 'CHF', 'CNY', 'EUR', 'GBP', "
+        "'HKD', 'IDR', 'INR', 'JPY', 'KRW', 'MYR', 'NZD', 'PHP', 'SAR', 'SGD', "
+        "'THB', 'USD', 'VND')) NOT VALID"
+    )
+
+
+def downgrade() -> None:
+    op.drop_constraint(
+        "ck_recurring_expenses_currency_valid", "recurring_expenses", type_="check"
+    )

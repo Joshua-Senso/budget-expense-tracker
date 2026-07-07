@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/select"
 import { ReceiptAttachments } from "@/features/attachments"
 import { CategoryColor, useCategories, type Category } from "@/features/categories"
+import { CurrencySelect } from "@/features/currency"
 import { useCreateRecurringExpense } from "@/features/recurring"
 import { ApiError } from "@/lib/api-client"
 
@@ -208,15 +209,7 @@ function EditExpenseFields({
           render={({ field }) => (
             <FormItem>
               <FormLabel>Currency</FormLabel>
-              <FormControl>
-                <Input
-                  maxLength={3}
-                  className="uppercase"
-                  placeholder="PHP"
-                  {...field}
-                  onChange={(event) => field.onChange(event.target.value.toUpperCase())}
-                />
-              </FormControl>
+              <CurrencySelect value={field.value} onValueChange={field.onChange} />
               <FormMessage />
             </FormItem>
           )}
@@ -490,15 +483,7 @@ function CreateExpenseFields({
           render={({ field }) => (
             <FormItem>
               <FormLabel>Currency</FormLabel>
-              <FormControl>
-                <Input
-                  maxLength={3}
-                  className="uppercase"
-                  placeholder="PHP"
-                  {...field}
-                  onChange={(event) => field.onChange(event.target.value.toUpperCase())}
-                />
-              </FormControl>
+              <CurrencySelect value={field.value} onValueChange={field.onChange} />
               <FormMessage />
             </FormItem>
           )}

@@ -1,11 +1,11 @@
-import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from pydantic import BaseModel, field_validator
 
+from app.features.currency.codes import DEFAULT_CURRENCY, SUPPORTED_CURRENCIES
 
-_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
+
 _MAX_AMOUNT = Decimal("9999999999.99")
 _MIN_INSTALLMENT_TOTAL = 2
 _MAX_INSTALLMENT_TOTAL = 60
@@ -13,8 +13,10 @@ _MAX_INSTALLMENT_TOTAL = 60
 
 def _validate_currency(v: str) -> str:
     upper = v.strip().upper()
-    if not _CURRENCY_RE.match(upper):
-        raise ValueError("currency must be a 3-letter ISO 4217 code, e.g. PHP")
+    if upper not in SUPPORTED_CURRENCIES:
+        raise ValueError(
+            f"currency must be one of: {', '.join(sorted(SUPPORTED_CURRENCIES))}"
+        )
     return upper
 
 
@@ -34,7 +36,7 @@ class ExpenseCreate(BaseModel):
     category_id: str
     description: str
     amount: Decimal
-    currency: str = "PHP"
+    currency: str = DEFAULT_CURRENCY
     spent_on: date
     household_id: str | None = None
 

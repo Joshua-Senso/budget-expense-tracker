@@ -17,6 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
+from app.features.currency.codes import DEFAULT_CURRENCY
 
 
 class RecurringExpense(Base):
@@ -39,7 +40,9 @@ class RecurringExpense(Base):
     )
     description: Mapped[str] = mapped_column(String, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="PHP")
+    currency: Mapped[str] = mapped_column(
+        String(3), nullable=False, default=DEFAULT_CURRENCY
+    )
     start_on: Mapped[date] = mapped_column(Date, nullable=False)
     frequency: Mapped[str] = mapped_column(String, nullable=False, default="monthly")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -69,6 +72,13 @@ class RecurringExpense(Base):
         CheckConstraint(
             "end_on IS NULL OR end_on >= start_on",
             name="ck_recurring_expenses_end_on_after_start",
+        ),
+        # Keep in sync with app.features.currency.codes.SUPPORTED_CURRENCIES
+        CheckConstraint(
+            "currency IN ('AED', 'AUD', 'CAD', 'CHF', 'CNY', 'EUR', 'GBP', 'HKD', "
+            "'IDR', 'INR', 'JPY', 'KRW', 'MYR', 'NZD', 'PHP', 'SAR', 'SGD', 'THB', "
+            "'USD', 'VND')",
+            name="ck_recurring_expenses_currency_valid",
         ),
         Index("ix_recurring_expenses_user_active", "user_id", "is_active"),
         Index(
