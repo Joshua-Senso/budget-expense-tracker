@@ -36,6 +36,8 @@ EXPORT_COLUMNS = [
     "Installment Index",
     "Installment Total",
     "Original Description",
+    "Base Amount",
+    "Exchange Rate",
 ]
 
 EXPORT_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -83,6 +85,8 @@ def _recorded_rows(
             "installment_index": expense.installment_index,
             "installment_total": expense.installment_total,
             "original_description": expense.original_description,
+            "base_amount": expense.base_amount,
+            "exchange_rate": expense.exchange_rate,
         }
         for expense in db.execute(query).scalars().all()
     ]
@@ -122,6 +126,12 @@ def _projected_rows(
                     "installment_index": None,
                     "installment_total": None,
                     "original_description": None,
+                    # A projected row is a preview, never persisted, so there's
+                    # no stored conversion to show -- left blank rather than
+                    # computed, since import always ignores "projected" rows
+                    # anyway (see build_import_plan).
+                    "base_amount": None,
+                    "exchange_rate": None,
                 }
             )
     return rows
@@ -163,6 +173,8 @@ def build_export_workbook(
                 row["installment_index"],
                 row["installment_total"],
                 row["original_description"],
+                str(row["base_amount"]) if row["base_amount"] is not None else None,
+                str(row["exchange_rate"]) if row["exchange_rate"] is not None else None,
             ]
         )
 
@@ -529,8 +541,15 @@ def _convert_for_import(
     capture a rate per row (unlike the create/update endpoints). Falls back
     to a manually maintained rate for the pair (BUD-52), then to recording
     the row unconverted rather than failing the whole import when a rate
-    would be required. Preserving currency/conversion faithfully through
-    import is BUD-54's job.
+    would be required.
+
+    Only called when a row's conversion inputs actually changed -- see the
+    `apply_import_plan` update loop, which otherwise preserves the existing
+    `base_amount`/`exchange_rate` untouched (same reasoning as
+    `expenses.service.update_expense`: re-deriving on every import would
+    silently drift a row's stored rate away from what was originally
+    recorded whenever the base currency or a manual rate changes later,
+    which is exactly the round-trip data loss BUD-54 (PRD §7.10) rules out).
     """
     base_currency = resolve_base_currency(
         db, user_id, month_key_for(spent_on), household_id=None
@@ -560,14 +579,27 @@ def apply_import_plan(
         )
 
     for update in updates:
+        # Recompute only when a conversion input actually changed this row
+        # (amount/currency/spent_on) -- mirrors update_expense's rule so a
+        # sheet re-upload of an untouched row round-trips its stored
+        # base_amount/exchange_rate exactly instead of re-deriving it against
+        # whatever base currency/manual rate happens to resolve today.
+        conversion_inputs_changed = (
+            update.amount != update.expense.amount
+            or update.currency != update.expense.currency
+            or update.spent_on != update.expense.spent_on
+        )
         update.expense.category_id = update.category_id
         update.expense.description = update.description
         update.expense.amount = update.amount
         update.expense.currency = update.currency
         update.expense.spent_on = update.spent_on
-        update.expense.base_amount, update.expense.exchange_rate = _convert_for_import(
-            db, user_id, update.amount, update.currency, update.spent_on
-        )
+        if conversion_inputs_changed:
+            update.expense.base_amount, update.expense.exchange_rate = (
+                _convert_for_import(
+                    db, user_id, update.amount, update.currency, update.spent_on
+                )
+            )
 
     for insert in inserts:
         base_amount, exchange_rate = _convert_for_import(

@@ -43,6 +43,8 @@ def _make_expense(**kwargs) -> Expense:
         "original_description": None,
         "recurring_expense_id": None,
         "household_id": None,
+        "base_amount": Decimal("150.00"),
+        "exchange_rate": Decimal("1"),
     }
     exp = MagicMock(spec=Expense)
     for k, v in {**defaults, **kwargs}.items():
@@ -198,6 +200,23 @@ def test_build_export_workbook_writes_header_and_rows() -> None:
     assert data_row[3] == "Lunch"
     assert data_row[4] == "150.00"
     assert data_row[5] == "PHP"
+    assert data_row[EXPORT_COLUMNS.index("Base Amount")] == "150.00"
+    assert data_row[EXPORT_COLUMNS.index("Exchange Rate")] == "1"
+
+
+def test_build_export_workbook_leaves_conversion_blank_for_projected_rows() -> None:
+    db = _mock_db()
+    rule = _make_rule(start_on=date(2026, 1, 15))
+    future_month_results = [[rule]] + [[] for _ in range(10)]
+    _queue_db(db, [("cat-1", "Subscriptions")], [], *future_month_results)
+
+    buffer = build_export_workbook(db, "user-1", 2026, today=date(2026, 1, 10))
+
+    workbook = load_workbook(buffer)
+    sheet = workbook["Expenses"]
+    data_row = [cell.value for cell in sheet[2]]
+    assert data_row[EXPORT_COLUMNS.index("Base Amount")] is None
+    assert data_row[EXPORT_COLUMNS.index("Exchange Rate")] is None
 
 
 def test_build_export_workbook_preserves_exact_decimal_amount() -> None:
@@ -349,6 +368,8 @@ def _row(row_number: int = 2, **overrides) -> dict:
         "Installment Index": None,
         "Installment Total": None,
         "Original Description": None,
+        "Base Amount": None,
+        "Exchange Rate": None,
         "_row_number": row_number,
     }
     defaults.update(overrides)
@@ -679,12 +700,93 @@ def test_apply_import_plan_inserts_updates_and_deletes() -> None:
     assert expense.amount == Decimal("20.00")
     assert expense.currency == "USD"
     assert expense.spent_on == date(2026, 2, 1)
-    # USD != the resolved base currency (PHP) and import has no interactive
-    # moment to supply a rate, so it falls back to unconverted (BUD-54 will
-    # address faithful cross-currency import conversion).
+    # currency changed (PHP -> USD), so conversion is recomputed; USD != the
+    # resolved base currency (PHP) and import has no interactive moment to
+    # supply a rate, so it falls back to unconverted.
     assert expense.base_amount == Decimal("20.00")
     assert expense.exchange_rate == Decimal("1")
     db.commit.assert_called_once()
+
+
+def test_apply_import_plan_preserves_stored_conversion_when_row_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-uploading a row whose amount/currency/spent_on didn't change must
+    round-trip its stored base_amount/exchange_rate exactly, not re-derive
+    it -- otherwise a later change to the base currency or a manual rate
+    (BUD-52) would silently drift an untouched row's conversion on every
+    import (BUD-54)."""
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("conversion should not be recomputed for an unchanged row")
+
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_base_currency", _fail_if_called
+    )
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_exchange_rate", _fail_if_called
+    )
+    db = _mock_db()
+    expense = _make_expense(
+        id="exp-1",
+        category_id="cat-1",
+        description="Old",
+        amount=Decimal("20.00"),
+        currency="USD",
+        spent_on=date(2026, 2, 1),
+        base_amount=Decimal("1160.00"),
+        exchange_rate=Decimal("58.00"),
+    )
+    _queue_db(db, [])
+
+    updates = [
+        _UpdatePlan(
+            expense, "cat-2", "Updated", Decimal("20.00"), "USD", date(2026, 2, 1)
+        )
+    ]
+
+    apply_import_plan(db, "user-1", [], updates, set())
+
+    assert expense.description == "Updated"
+    assert expense.base_amount == Decimal("1160.00")
+    assert expense.exchange_rate == Decimal("58.00")
+
+
+def test_apply_import_plan_recomputes_conversion_when_amount_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_base_currency",
+        lambda *args, **kwargs: "PHP",
+    )
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_exchange_rate",
+        lambda db, user_id, household_id, currency, base_currency, exchange_rate: (
+            exchange_rate
+        ),
+    )
+    db = _mock_db()
+    expense = _make_expense(
+        id="exp-1",
+        category_id="cat-1",
+        amount=Decimal("150.00"),
+        currency="PHP",
+        spent_on=date(2026, 1, 5),
+        base_amount=Decimal("150.00"),
+        exchange_rate=Decimal("1"),
+    )
+    _queue_db(db, [])
+
+    updates = [
+        _UpdatePlan(
+            expense, "cat-1", "Lunch", Decimal("200.00"), "PHP", date(2026, 1, 5)
+        )
+    ]
+
+    apply_import_plan(db, "user-1", [], updates, set())
+
+    assert expense.base_amount == Decimal("200.00")
+    assert expense.exchange_rate == Decimal("1")
 
 
 def test_apply_import_plan_uses_stored_manual_rate_for_cross_currency_row(
