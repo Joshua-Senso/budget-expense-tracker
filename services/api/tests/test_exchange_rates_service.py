@@ -258,6 +258,59 @@ def test_upsert_exchange_rate_household_scope_happy_path() -> None:
     db.commit.assert_called_once()
 
 
+def test_upsert_exchange_rate_household_scope_forbidden_for_non_owner_member_updating_existing() -> (
+    None
+):
+    """Members may add a *new* rate to a shared scope, but overwriting one
+    that's already there is an edit -- only the household owner may do that
+    (PRD §10), mirroring categories/expenses."""
+    db = _mock_db()
+    existing = _make_rate(household_id="household-1", user_id="user-2")
+    db.scalar.side_effect = ["member", existing]  # membership check, then found pair
+
+    with pytest.raises(HouseholdRoleError):
+        upsert_exchange_rate(
+            db, "user-1", "household-1", "USD", "PHP", Decimal("57.50")
+        )
+
+    db.commit.assert_not_called()
+
+
+def test_upsert_exchange_rate_household_scope_allowed_for_owner_updating_existing() -> (
+    None
+):
+    db = _mock_db()
+    existing = _make_rate(
+        household_id="household-1", user_id="user-2", rate=Decimal("55.00")
+    )
+    db.scalar.side_effect = ["owner", existing]  # requester owns household-1
+
+    result = upsert_exchange_rate(
+        db, "user-1", "household-1", "USD", "PHP", Decimal("57.50")
+    )
+
+    assert result is existing
+    assert result.rate == Decimal("57.50")
+    db.commit.assert_called_once()
+
+
+def test_upsert_exchange_rate_race_recovery_still_enforces_owner_check() -> None:
+    """A non-owner member losing the concurrent-insert race must not be able
+    to sneak an update past the owner check via the race-recovery path."""
+    db = _mock_db()
+    existing = _make_rate(household_id="household-1", user_id="user-2")
+    # membership check, no existing pair before the insert, found on retry
+    db.scalar.side_effect = ["member", None, existing]
+    db.commit.side_effect = [_integrity_error("23505")]
+
+    with pytest.raises(HouseholdRoleError):
+        upsert_exchange_rate(
+            db, "user-1", "household-1", "USD", "PHP", Decimal("57.50")
+        )
+
+    db.rollback.assert_called_once()
+
+
 def test_delete_exchange_rate_shared_row_forbidden_for_non_owner_member() -> None:
     """Only the household owner may delete a shared rate (PRD §10); members
     may read and add."""

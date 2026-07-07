@@ -197,6 +197,32 @@ def test_upsert_exchange_rate_returns_404_when_not_a_household_member(
     assert response.status_code == 404
 
 
+def test_upsert_exchange_rate_returns_403_when_not_owner_of_shared_row(
+    monkeypatch,
+) -> None:
+    def raise_role_error(db, user_id, household_id, from_currency, to_currency, rate):
+        raise HouseholdRoleError(household_id)
+
+    monkeypatch.setattr(
+        "app.features.exchange_rates.router.service.upsert_exchange_rate",
+        raise_role_error,
+    )
+    client, token = _authed_client(monkeypatch)
+
+    response = client.put(
+        "/exchange-rates",
+        headers=_auth_header(token),
+        json={
+            "from_currency": "USD",
+            "to_currency": "PHP",
+            "rate": "56.00",
+            "household_id": "house-1",
+        },
+    )
+
+    assert response.status_code == 403
+
+
 # --- delete ---
 
 

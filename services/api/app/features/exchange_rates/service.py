@@ -5,7 +5,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.households import (
+    OWNER_ROLE,
+    HouseholdAccessError,
+    HouseholdRoleError,
     assert_household_scope,
+    get_household_role,
     household_scope_clauses,
     locate_household_scoped_row,
 )
@@ -47,6 +51,15 @@ def list_exchange_rates(
     )
 
 
+def _require_owner_for_update(household_id: str | None, role: str | None) -> None:
+    """Members may add a *new* rate to a shared scope, same as categories --
+    but overwriting one that's already there is an edit, not an add, so it
+    follows the same owner-only rule as editing a shared category/expense
+    (PRD §10). Personal scope has no roles to check."""
+    if household_id is not None and role != OWNER_ROLE:
+        raise HouseholdRoleError(household_id)
+
+
 def upsert_exchange_rate(
     db: Session,
     user_id: str,
@@ -55,9 +68,17 @@ def upsert_exchange_rate(
     to_currency: str,
     rate: Decimal,
 ) -> ExchangeRate:
-    assert_household_scope(db, user_id, household_id)
+    # Fetched once and reused for both the membership and (if the pair
+    # already exists) ownership checks below, instead of querying `members`
+    # twice for the same (user_id, household_id) -- same reasoning as
+    # locate_household_scoped_row.
+    role = get_household_role(db, user_id, household_id) if household_id else None
+    if household_id is not None and role is None:
+        raise HouseholdAccessError(household_id)
+
     existing = _find_pair(db, user_id, household_id, from_currency, to_currency)
     if existing is not None:
+        _require_owner_for_update(household_id, role)
         existing.rate = rate
         existing.updated_by = user_id
         db.commit()
@@ -79,14 +100,15 @@ def upsert_exchange_rate(
         if getattr(exc.orig, "sqlstate", None) != "23505":
             raise
         # Lost a race with a concurrent first insert for this pair (within
-        # the same scope) -- treat as an update rather than failing the
-        # request. The row is guaranteed to exist now (that's what the
-        # unique violation means), but re-fetch explicitly rather than
-        # asserting it -- assertions are stripped under `python -O` and this
-        # path must stay safe either way.
+        # the same scope) -- the row now exists (that's what the unique
+        # violation means), so this becomes an update and needs the same
+        # owner check as the existing-row branch above. Re-fetch explicitly
+        # rather than asserting it exists -- assertions are stripped under
+        # `python -O` and this path must stay safe either way.
         existing = _find_pair(db, user_id, household_id, from_currency, to_currency)
         if existing is None:
             raise
+        _require_owner_for_update(household_id, role)
         existing.rate = rate
         existing.updated_by = user_id
         db.commit()
