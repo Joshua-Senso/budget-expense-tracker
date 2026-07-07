@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from io import BytesIO
 from typing import Any
 
@@ -231,6 +231,11 @@ class _InsertPlan:
     amount: Decimal
     currency: str
     spent_on: date
+    # Sheet-supplied conversion, already validated against `amount` -- None
+    # for either means the sheet left both blank, so apply_import_plan
+    # computes them instead (see _convert_for_import).
+    base_amount: Decimal | None = None
+    exchange_rate: Decimal | None = None
 
 
 @dataclass
@@ -241,6 +246,8 @@ class _UpdatePlan:
     amount: Decimal
     currency: str
     spent_on: date
+    base_amount: Decimal | None = None
+    exchange_rate: Decimal | None = None
 
 
 def _clean_str(value: Any) -> str:
@@ -412,6 +419,47 @@ def _parse_currency(value: Any) -> tuple[str | None, str | None]:
         return None, str(exc)
 
 
+_AMOUNT_QUANT = Decimal("0.01")
+
+
+def _parse_decimal(value: Any) -> Decimal | None:
+    """Raises InvalidOperation for a value that can't be read as a number."""
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, int | float):
+        return Decimal(str(value))
+    return Decimal(str(value).strip())
+
+
+def _parse_base_amount(value: Any) -> tuple[Decimal | None, str | None]:
+    """Optional -- a blank cell means "let the system compute it" (see
+    apply_import_plan). A non-blank cell must be a valid positive amount;
+    whether it's *consistent* with Amount x Exchange Rate is checked by the
+    caller once all three fields are parsed."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None, None
+    try:
+        amount = _parse_decimal(value)
+    except InvalidOperation:
+        return None, "Base Amount must be a valid number."
+    if amount <= 0:
+        return None, "Base Amount must be positive."
+    return amount.quantize(_AMOUNT_QUANT, rounding=ROUND_HALF_UP), None
+
+
+def _parse_exchange_rate(value: Any) -> tuple[Decimal | None, str | None]:
+    """Optional, same blank-means-compute convention as Base Amount."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None, None
+    try:
+        rate = _parse_decimal(value)
+    except InvalidOperation:
+        return None, "Exchange Rate must be a valid number."
+    if rate <= 0:
+        return None, "Exchange Rate must be positive."
+    return rate, None
+
+
 def _parse_spent_on(value: Any) -> tuple[date | None, str | None]:
     if isinstance(value, datetime):
         return value.date(), None
@@ -482,6 +530,31 @@ def build_import_plan(
         elif spent_on.year != year:
             messages.append(f"Date must be in {year}.")
 
+        base_amount, base_amount_error = _parse_base_amount(row.get("Base Amount"))
+        if base_amount_error:
+            messages.append(base_amount_error)
+
+        exchange_rate, exchange_rate_error = _parse_exchange_rate(
+            row.get("Exchange Rate")
+        )
+        if exchange_rate_error:
+            messages.append(exchange_rate_error)
+
+        if not base_amount_error and not exchange_rate_error:
+            if (base_amount is None) != (exchange_rate is None):
+                messages.append(
+                    "Base Amount and Exchange Rate must both be provided, or "
+                    "both left blank."
+                )
+            elif amount is not None and base_amount is not None:
+                expected_base_amount = (amount * exchange_rate).quantize(
+                    _AMOUNT_QUANT, rounding=ROUND_HALF_UP
+                )
+                if base_amount != expected_base_amount:
+                    messages.append(
+                        "Base Amount does not match Amount x Exchange Rate."
+                    )
+
         category_name = _clean_str(row.get("Category"))
         category_id = categories.get(category_name) if category_name else None
         if not category_name:
@@ -499,7 +572,15 @@ def build_import_plan(
                 errors.append({"row": row_number, "messages": messages})
                 continue
             inserts.append(
-                _InsertPlan(category_id, description, amount, currency, spent_on)
+                _InsertPlan(
+                    category_id,
+                    description,
+                    amount,
+                    currency,
+                    spent_on,
+                    base_amount,
+                    exchange_rate,
+                )
             )
             continue
 
@@ -527,7 +608,16 @@ def build_import_plan(
 
         seen_ids.add(row_id)
         updates.append(
-            _UpdatePlan(existing, category_id, description, amount, currency, spent_on)
+            _UpdatePlan(
+                existing,
+                category_id,
+                description,
+                amount,
+                currency,
+                spent_on,
+                base_amount,
+                exchange_rate,
+            )
         )
 
     delete_ids = universe_ids - seen_ids
@@ -543,13 +633,10 @@ def _convert_for_import(
     the row unconverted rather than failing the whole import when a rate
     would be required.
 
-    Only called when a row's conversion inputs actually changed -- see the
-    `apply_import_plan` update loop, which otherwise preserves the existing
-    `base_amount`/`exchange_rate` untouched (same reasoning as
-    `expenses.service.update_expense`: re-deriving on every import would
-    silently drift a row's stored rate away from what was originally
-    recorded whenever the base currency or a manual rate changes later,
-    which is exactly the round-trip data loss BUD-54 (PRD §7.10) rules out).
+    Only called when a row's sheet doesn't supply a validated Base Amount +
+    Exchange Rate pair (see `apply_import_plan`, which otherwise trusts
+    those sheet values directly) -- i.e. a genuinely new row a user typed by
+    hand, or a legacy sheet exported before these columns existed.
     """
     base_currency = resolve_base_currency(
         db, user_id, month_key_for(spent_on), household_id=None
@@ -579,22 +666,20 @@ def apply_import_plan(
         )
 
     for update in updates:
-        # Recompute only when a conversion input actually changed this row
-        # (amount/currency/spent_on) -- mirrors update_expense's rule so a
-        # sheet re-upload of an untouched row round-trips its stored
-        # base_amount/exchange_rate exactly instead of re-deriving it against
-        # whatever base currency/manual rate happens to resolve today.
-        conversion_inputs_changed = (
-            update.amount != update.expense.amount
-            or update.currency != update.expense.currency
-            or update.spent_on != update.expense.spent_on
-        )
         update.expense.category_id = update.category_id
         update.expense.description = update.description
         update.expense.amount = update.amount
         update.expense.currency = update.currency
         update.expense.spent_on = update.spent_on
-        if conversion_inputs_changed:
+        # A validated Base Amount + Exchange Rate on the sheet (already
+        # checked consistent with Amount, in build_import_plan) is trusted
+        # as-is -- this is what makes a plain export -> re-import round-trip
+        # exactly, rather than re-deriving the conversion against whatever
+        # base currency/manual rate happens to resolve today.
+        if update.base_amount is not None and update.exchange_rate is not None:
+            update.expense.base_amount = update.base_amount
+            update.expense.exchange_rate = update.exchange_rate
+        else:
             update.expense.base_amount, update.expense.exchange_rate = (
                 _convert_for_import(
                     db, user_id, update.amount, update.currency, update.spent_on
@@ -602,9 +687,12 @@ def apply_import_plan(
             )
 
     for insert in inserts:
-        base_amount, exchange_rate = _convert_for_import(
-            db, user_id, insert.amount, insert.currency, insert.spent_on
-        )
+        if insert.base_amount is not None and insert.exchange_rate is not None:
+            base_amount, exchange_rate = insert.base_amount, insert.exchange_rate
+        else:
+            base_amount, exchange_rate = _convert_for_import(
+                db, user_id, insert.amount, insert.currency, insert.spent_on
+            )
         db.add(
             Expense(
                 user_id=user_id,

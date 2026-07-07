@@ -517,6 +517,112 @@ def test_build_import_plan_rejects_invalid_currency() -> None:
     assert "currency must be one of" in errors[0]["messages"][0]
 
 
+def test_build_import_plan_accepts_row_with_no_conversion_columns() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    inserts, _, _, errors = build_import_plan(db, "user-1", [_row()], 2026)
+
+    assert errors == []
+    assert inserts[0].base_amount is None
+    assert inserts[0].exchange_rate is None
+
+
+def test_build_import_plan_accepts_consistent_conversion_columns() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(
+        **{
+            "Amount": "20.00",
+            "Currency": "USD",
+            "Base Amount": "1160.00",
+            "Exchange Rate": "58.00",
+        }
+    )
+    inserts, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert errors == []
+    assert inserts[0].base_amount == Decimal("1160.00")
+    assert inserts[0].exchange_rate == Decimal("58.00")
+
+
+def test_build_import_plan_rejects_malformed_base_amount() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "not-a-number", "Exchange Rate": "58.00"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Base Amount must be a valid number." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_malformed_exchange_rate() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "1160.00", "Exchange Rate": "not-a-number"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Exchange Rate must be a valid number." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_zero_or_negative_base_amount() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "0", "Exchange Rate": "1"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Base Amount must be positive." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_zero_or_negative_exchange_rate() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "150.00", "Exchange Rate": "-1"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Exchange Rate must be positive." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_base_amount_without_exchange_rate() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "150.00", "Exchange Rate": None})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert (
+        "Base Amount and Exchange Rate must both be provided, or both left blank."
+        in errors[0]["messages"]
+    )
+
+
+def test_build_import_plan_rejects_inconsistent_base_amount() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(
+        **{
+            "Amount": "20.00",
+            "Currency": "USD",
+            "Base Amount": "1000.00",
+            "Exchange Rate": "58.00",
+        }
+    )
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Base Amount does not match Amount x Exchange Rate." in errors[0]["messages"]
+
+
 def test_build_import_plan_rejects_invalid_date() -> None:
     db = _mock_db()
     _queue_db(db, [("Food", "cat-1")], [])
@@ -708,17 +814,18 @@ def test_apply_import_plan_inserts_updates_and_deletes() -> None:
     db.commit.assert_called_once()
 
 
-def test_apply_import_plan_preserves_stored_conversion_when_row_unchanged(
+def test_apply_import_plan_honors_sheet_supplied_conversion_on_update(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Re-uploading a row whose amount/currency/spent_on didn't change must
-    round-trip its stored base_amount/exchange_rate exactly, not re-derive
-    it -- otherwise a later change to the base currency or a manual rate
-    (BUD-52) would silently drift an untouched row's conversion on every
-    import (BUD-54)."""
+    """A row whose sheet carries a validated Base Amount + Exchange Rate
+    (as build_import_plan would parse from a plain export -> re-import) must
+    round-trip that conversion exactly, not re-derive it against whatever
+    base currency/manual rate happens to resolve today (BUD-54)."""
 
     def _fail_if_called(*args, **kwargs):
-        raise AssertionError("conversion should not be recomputed for an unchanged row")
+        raise AssertionError(
+            "conversion should not be recomputed when the sheet supplies it"
+        )
 
     monkeypatch.setattr(
         "app.features.import_export.service.resolve_base_currency", _fail_if_called
@@ -734,14 +841,21 @@ def test_apply_import_plan_preserves_stored_conversion_when_row_unchanged(
         amount=Decimal("20.00"),
         currency="USD",
         spent_on=date(2026, 2, 1),
-        base_amount=Decimal("1160.00"),
-        exchange_rate=Decimal("58.00"),
+        base_amount=Decimal("999.00"),
+        exchange_rate=Decimal("99.00"),
     )
     _queue_db(db, [])
 
     updates = [
         _UpdatePlan(
-            expense, "cat-2", "Updated", Decimal("20.00"), "USD", date(2026, 2, 1)
+            expense,
+            "cat-2",
+            "Updated",
+            Decimal("20.00"),
+            "USD",
+            date(2026, 2, 1),
+            Decimal("1160.00"),
+            Decimal("58.00"),
         )
     ]
 
@@ -752,7 +866,7 @@ def test_apply_import_plan_preserves_stored_conversion_when_row_unchanged(
     assert expense.exchange_rate == Decimal("58.00")
 
 
-def test_apply_import_plan_recomputes_conversion_when_amount_changes(
+def test_apply_import_plan_recomputes_conversion_when_sheet_omits_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -787,6 +901,48 @@ def test_apply_import_plan_recomputes_conversion_when_amount_changes(
 
     assert expense.base_amount == Decimal("200.00")
     assert expense.exchange_rate == Decimal("1")
+
+
+def test_apply_import_plan_honors_sheet_supplied_conversion_on_insert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The second BUD-54 review finding: a blank-Row-ID insert (e.g. a full
+    restore where Row IDs were stripped) must also preserve an exported
+    cross-currency conversion instead of recomputing it -- otherwise an
+    exported USD row (Base Amount 1160.00, Exchange Rate 58.00) would import
+    unconverted if no manual rate currently resolves for the pair."""
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError(
+            "conversion should not be recomputed when the sheet supplies it"
+        )
+
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_base_currency", _fail_if_called
+    )
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_exchange_rate", _fail_if_called
+    )
+    db = _mock_db()
+
+    inserts = [
+        _InsertPlan(
+            "cat-1",
+            "New expense",
+            Decimal("20.00"),
+            "USD",
+            date(2026, 1, 1),
+            Decimal("1160.00"),
+            Decimal("58.00"),
+        )
+    ]
+
+    summary = apply_import_plan(db, "user-1", inserts, [], set())
+
+    assert summary.inserted == 1
+    added_expense = db.add.call_args[0][0]
+    assert added_expense.base_amount == Decimal("1160.00")
+    assert added_expense.exchange_rate == Decimal("58.00")
 
 
 def test_apply_import_plan_uses_stored_manual_rate_for_cross_currency_row(
