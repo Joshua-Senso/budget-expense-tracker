@@ -21,7 +21,13 @@ function chunkMonths(months: MonthlyOverview[]): MonthlyOverview[][] {
   return windows
 }
 
-function MonthTile({ month }: { month: MonthlyOverview }) {
+function MonthTile({
+  month,
+  baseCurrency,
+}: {
+  month: MonthlyOverview
+  baseCurrency: string
+}) {
   return (
     <div className="flex flex-col gap-3 rounded-3xl border bg-card p-5 shadow-sm">
       <div className="flex items-baseline justify-between">
@@ -29,7 +35,7 @@ function MonthTile({ month }: { month: MonthlyOverview }) {
           {formatMonthName(month.month)}
         </h3>
         <span className="text-xl font-semibold">
-          {formatCurrency(month.month_total, "PHP")}
+          {formatCurrency(month.month_total, baseCurrency)}
         </span>
       </div>
 
@@ -37,13 +43,13 @@ function MonthTile({ month }: { month: MonthlyOverview }) {
         <li className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Card</span>
           <span className="font-medium">
-            {formatCurrency(month.card_total, "PHP")}
+            {formatCurrency(month.card_total, baseCurrency)}
           </span>
         </li>
         <li className="flex items-center justify-between text-sm">
           <span className="text-muted-foreground">Other</span>
           <span className="font-medium">
-            {formatCurrency(month.other_total, "PHP")}
+            {formatCurrency(month.other_total, baseCurrency)}
           </span>
         </li>
       </ul>
@@ -111,7 +117,11 @@ function YearlyOverview() {
 
       <div className="grid gap-4 sm:grid-cols-3">
         {currentWindow.map((month) => (
-          <MonthTile key={month.month_key} month={month} />
+          <MonthTile
+            key={month.month_key}
+            month={month}
+            baseCurrency={overview.base_currency}
+          />
         ))}
       </div>
 
@@ -120,7 +130,7 @@ function YearlyOverview() {
           Year total
         </h3>
         <span className="text-xl font-semibold">
-          {formatCurrency(overview.year_total, "PHP")}
+          {formatCurrency(overview.year_total, overview.base_currency)}
         </span>
       </div>
     </div>
