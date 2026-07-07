@@ -112,11 +112,15 @@ function ExpenseAmount({
     expense.base_amount,
     baseCurrency
   )
+  // A projected occurrence's base_amount/exchange_rate are placeholder
+  // "unconverted" defaults, not a real computed conversion (see
+  // mergeProjectedExpenses) -- never show a fabricated one.
+  const showConverted = converted !== null && !expense.isProjected
 
   return (
     <span className="flex shrink-0 flex-col items-end">
       <span className="text-sm font-semibold">{primary}</span>
-      {converted && (
+      {showConverted && (
         <span className="text-xs text-muted-foreground">≈ {converted}</span>
       )}
     </span>
@@ -142,11 +146,16 @@ function ExpenseList() {
   } = useCategories()
   // Same query the dashboard summary already fetches for this month/scope --
   // shares its cache entry, so this doesn't add a network request. Used only
-  // for its base_currency, which totals in a different currency than "PHP"
-  // need (BUD-53).
-  const { data: summary } = useDashboardSummary({ year, month })
-  const baseCurrency = summary?.base_currency ?? "PHP"
-  const isLoading = expensesLoading || categoriesLoading || projectedLoading
+  // for its base_currency: totals/amounts are only rendered once this
+  // resolves, since silently assuming "PHP" would mislabel a non-PHP
+  // workspace's base_amount values with the wrong currency (BUD-53).
+  const {
+    data: summary,
+    isLoading: summaryLoading,
+    isError: summaryError,
+  } = useDashboardSummary({ year, month })
+  const isLoading =
+    expensesLoading || categoriesLoading || projectedLoading || summaryLoading
   const deleteExpense = useDeleteExpense()
   const filter = useExpenseFilterStore((state) => state.filter)
 
@@ -241,9 +250,9 @@ function ExpenseList() {
     <section className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold tracking-tight">Expenses</h2>
-        {!isLoading && !expensesError && (
+        {!isLoading && !expensesError && summary && (
           <span className="text-sm font-semibold">
-            {formatCurrency(filteredTotal, baseCurrency)}
+            {formatCurrency(filteredTotal, summary.base_currency)}
           </span>
         )}
       </div>
@@ -255,6 +264,13 @@ function ExpenseList() {
       {expensesError && (
         <p className="text-sm text-destructive" role="alert">
           Failed to load expenses.
+        </p>
+      )}
+
+      {summaryError && !expensesError && (
+        <p className="text-sm text-destructive" role="alert">
+          Failed to load this month&apos;s base currency; amounts are
+          unavailable.
         </p>
       )}
 
@@ -282,7 +298,7 @@ function ExpenseList() {
           </p>
         )}
 
-      {!isLoading && !expensesError && filteredExpenses.length > 0 && (
+      {!isLoading && !expensesError && summary && filteredExpenses.length > 0 && (
         <ul className="flex flex-col gap-2">
           {filteredExpenses.map((expense) => {
             const category = categoryById.get(expense.category_id)
@@ -327,7 +343,10 @@ function ExpenseList() {
                     </span>
                   </div>
 
-                  <ExpenseAmount expense={expense} baseCurrency={baseCurrency} />
+                  <ExpenseAmount
+                    expense={expense}
+                    baseCurrency={summary.base_currency}
+                  />
 
                   <div className="flex shrink-0 items-center gap-1">
                     <Button
