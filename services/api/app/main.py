@@ -10,6 +10,7 @@ from app.features.attachments.router import router as attachments_router
 from app.features.budget.router import router as budget_router
 from app.features.categories.router import router as categories_router
 from app.features.dashboard.router import router as dashboard_router
+from app.features.exchange_rates.router import router as exchange_rates_router
 from app.features.expenses.router import router as expenses_router
 from app.features.import_export.router import router as import_export_router
 from app.features.recurring.router import router as recurring_router
@@ -31,6 +32,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_router)
     app.include_router(recurring_router)
     app.include_router(import_export_router)
+    app.include_router(exchange_rates_router)
 
     @app.exception_handler(StorageNotConfiguredError)
     def handle_storage_not_configured(

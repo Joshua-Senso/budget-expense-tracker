@@ -34,6 +34,19 @@ def _default_base_currency(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_stored_exchange_rate_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default the manual-rate lookup (BUD-52) to a pass-through -- no stored
+    rate for any pair -- so existing tests don't need to know about it.
+    Fallback-specific tests override this per-test."""
+    monkeypatch.setattr(
+        "app.features.expenses.service.resolve_exchange_rate",
+        lambda db, user_id, household_id, currency, base_currency, exchange_rate: (
+            exchange_rate
+        ),
+    )
+
+
 def _make_expense(**kwargs) -> Expense:
     defaults = {
         "id": "exp-1",
@@ -150,6 +163,28 @@ def test_create_expense_raises_when_rate_missing_for_differing_currency() -> Non
         )
 
     db.add.assert_not_called()
+
+
+def test_create_expense_uses_stored_manual_rate_when_none_supplied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUD-52: when the caller doesn't supply a rate, a manually maintained
+    rate for the pair is used instead of raising."""
+    monkeypatch.setattr(
+        "app.features.expenses.service.resolve_exchange_rate",
+        lambda db, user_id, household_id, currency, base_currency, exchange_rate: (
+            Decimal("56.00")
+        ),
+    )
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+
+    result = create_expense(
+        db, "user-1", "cat-1", "Lunch", Decimal("100"), "USD", date(2026, 7, 1)
+    )
+
+    assert result.base_amount == Decimal("5600.00")
+    assert result.exchange_rate == Decimal("56.00")
 
 
 def test_create_expense_category_not_owned_raises() -> None:

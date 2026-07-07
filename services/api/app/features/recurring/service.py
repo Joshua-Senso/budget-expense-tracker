@@ -18,6 +18,7 @@ from app.features.currency.service import (
     month_key_for,
     resolve_base_currency,
 )
+from app.features.exchange_rates.service import resolve_exchange_rate
 from app.features.expenses.models import Expense
 from app.features.recurring.models import RecurringExpense
 from app.features.recurring.schemas import ProjectedExpense
@@ -96,6 +97,9 @@ def create_recurring_expense(
     # generates future months' rows has no user present to supply a rate.
     base_currency = resolve_base_currency(
         db, user_id, month_key_for(start_on), household_id
+    )
+    exchange_rate = resolve_exchange_rate(
+        db, user_id, household_id, currency, base_currency, exchange_rate
     )
     _, exchange_rate = convert_to_base(amount, currency, base_currency, exchange_rate)
     recurring = RecurringExpense(
@@ -235,14 +239,24 @@ def generate_recurring_expenses(db: Session, year: int, month: int) -> int:
         # Edge case: the scope's base currency drifted after the rule was
         # created (with no rate needed, or a rate for a currency pair that
         # no longer applies) and there's no user present to supply a fresh
-        # one now. Record this occurrence unconverted rather than dropping
-        # it from the whole batch (same resilience as the inaccessible-
-        # category skip above, which also can't abort the rest of the run).
+        # one now. Fall back to a manually maintained rate for the pair
+        # (BUD-52) before recording the occurrence unconverted rather than
+        # dropping it from the whole batch (same resilience as the
+        # inaccessible-category skip above, which also can't abort the rest
+        # of the run).
         base_currency = resolve_base_currency(
             db, rule.user_id, month_key_for(spent_on), rule.household_id
         )
+        rate = resolve_exchange_rate(
+            db,
+            rule.user_id,
+            rule.household_id,
+            rule.currency,
+            base_currency,
+            rule.exchange_rate,
+        )
         base_amount, exchange_rate = convert_to_base_or_unconverted(
-            rule.amount, rule.currency, base_currency, rule.exchange_rate
+            rule.amount, rule.currency, base_currency, rate
         )
 
         try:

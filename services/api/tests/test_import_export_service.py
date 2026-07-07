@@ -83,6 +83,19 @@ def _default_base_currency(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def _no_stored_exchange_rate_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Default the manual-rate lookup (BUD-52) to a pass-through -- no stored
+    rate for any pair -- so existing tests don't need to know about it.
+    Fallback-specific tests override this per-test."""
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_exchange_rate",
+        lambda db, user_id, household_id, currency, base_currency, exchange_rate: (
+            exchange_rate
+        ),
+    )
+
+
 def _queue_db(db: MagicMock, *result_sets) -> None:
     """Chain db.execute(...).all()/.scalars().all() return values in call order."""
     execute_results = []
@@ -672,6 +685,33 @@ def test_apply_import_plan_inserts_updates_and_deletes() -> None:
     assert expense.base_amount == Decimal("20.00")
     assert expense.exchange_rate == Decimal("1")
     db.commit.assert_called_once()
+
+
+def test_apply_import_plan_uses_stored_manual_rate_for_cross_currency_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUD-52: import has no interactive moment to supply a rate (see the
+    unconverted-fallback test above), but it can still use a manually
+    maintained rate for the pair instead of falling all the way back to
+    recording the row unconverted."""
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_exchange_rate",
+        lambda db, user_id, household_id, currency, base_currency, exchange_rate: (
+            Decimal("56.00")
+        ),
+    )
+    db = _mock_db()
+
+    inserts = [
+        _InsertPlan("cat-1", "New expense", Decimal("10.00"), "USD", date(2026, 1, 1))
+    ]
+
+    summary = apply_import_plan(db, "user-1", inserts, [], set())
+
+    assert summary.inserted == 1
+    added_expense = db.add.call_args[0][0]
+    assert added_expense.base_amount == Decimal("560.00")
+    assert added_expense.exchange_rate == Decimal("56.00")
 
 
 def test_apply_import_plan_skips_delete_statement_when_nothing_to_delete() -> None:
