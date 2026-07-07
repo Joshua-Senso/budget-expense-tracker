@@ -373,6 +373,54 @@ def test_update_expense_does_not_misapply_stale_rate_after_base_currency_drift(
     assert result.exchange_rate == Decimal("56.00")
 
 
+def test_update_expense_recomputes_when_spent_on_moves_to_different_base_currency_month(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard: a personal base currency is resolved per-month, so
+    moving a row's spent_on into a different month can change which base
+    currency it resolves against even though currency/amount/exchange_rate
+    weren't touched. If the recompute isn't triggered, the row keeps its old
+    month's base_amount but is now aggregated into the new month's totals
+    under a different (mismatched) base currency."""
+
+    def base_currency_by_month(
+        db: object, user_id: str, month_key: str, household_id: str | None
+    ) -> str:
+        del db, user_id, household_id
+        return "PHP" if month_key == "2026-07" else "EUR"
+
+    monkeypatch.setattr(
+        "app.features.expenses.service.resolve_base_currency", base_currency_by_month
+    )
+    db = _mock_db()
+    exp = _make_expense(currency="PHP", spent_on=date(2026, 7, 1))
+    db.get.return_value = exp
+
+    with pytest.raises(ExchangeRateRequiredError):
+        update_expense(db, "user-1", "exp-1", spent_on=date(2026, 8, 1))
+
+
+def test_update_expense_recomputes_spent_on_move_when_base_currency_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Moving spent_on into a month that resolves to the *same* base
+    currency should recompute cleanly with no rate required."""
+
+    monkeypatch.setattr(
+        "app.features.expenses.service.resolve_base_currency",
+        lambda *args, **kwargs: "PHP",
+    )
+    db = _mock_db()
+    exp = _make_expense(currency="PHP", spent_on=date(2026, 7, 1))
+    db.get.return_value = exp
+
+    result = update_expense(db, "user-1", "exp-1", spent_on=date(2026, 8, 1))
+
+    assert result.spent_on == date(2026, 8, 1)
+    assert result.base_amount == Decimal("150.00")
+    assert result.exchange_rate == Decimal("1")
+
+
 # --- delete_expense ---
 
 

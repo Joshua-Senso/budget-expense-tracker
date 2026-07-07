@@ -203,10 +203,22 @@ def update_expense(
     # records what that was, so there's no safe way to tell whether it's
     # still valid for the base currency active *now* (which can drift --
     # a household's or a user's base currency can change independently of
-    # this row). A call that doesn't touch amount/currency/exchange_rate
-    # leaves the existing base_amount/exchange_rate untouched rather than
-    # risk silently misapplying a stale rate.
-    if amount is not None or currency is not None or exchange_rate is not None:
+    # this row). A call that doesn't touch amount/currency/spent_on/
+    # exchange_rate leaves the existing base_amount/exchange_rate untouched
+    # rather than risk silently misapplying a stale rate.
+    #
+    # spent_on is included even though it isn't a conversion input by
+    # itself: a personal base currency is resolved per-month, so moving a
+    # row to a different month can change which base currency it resolves
+    # against (a household's base currency doesn't vary by month, but this
+    # check doesn't need to know that -- recomputing is cheap and correct
+    # either way).
+    if (
+        amount is not None
+        or currency is not None
+        or spent_on is not None
+        or exchange_rate is not None
+    ):
         base_currency = resolve_base_currency(
             db, user_id, month_key_for(expense.spent_on), expense.household_id
         )
