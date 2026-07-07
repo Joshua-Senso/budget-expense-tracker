@@ -1,18 +1,20 @@
-import re
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from typing import Literal
 
 from pydantic import BaseModel, field_validator, model_validator
 
-_CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
+from app.features.currency.codes import DEFAULT_CURRENCY, SUPPORTED_CURRENCIES
+
 _MAX_AMOUNT = Decimal("9999999999.99")
 
 
 def _validate_currency(v: str) -> str:
     upper = v.strip().upper()
-    if not _CURRENCY_RE.match(upper):
-        raise ValueError("currency must be a 3-letter ISO 4217 code, e.g. PHP")
+    if upper not in SUPPORTED_CURRENCIES:
+        raise ValueError(
+            f"currency must be one of: {', '.join(sorted(SUPPORTED_CURRENCIES))}"
+        )
     return upper
 
 
@@ -32,7 +34,7 @@ class RecurringExpenseCreate(BaseModel):
     category_id: str
     description: str
     amount: Decimal
-    currency: str = "PHP"
+    currency: str = DEFAULT_CURRENCY
     start_on: date
     end_on: date | None = None
     household_id: str | None = None

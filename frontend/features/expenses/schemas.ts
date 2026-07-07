@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { SUPPORTED_CURRENCIES } from "@/features/currency"
+
 const dateRegex = /^\d{4}-\d{2}-\d{2}$/
 const maxAmount = 9_999_999_999.99
 
@@ -21,7 +23,9 @@ const currencySchema = z
   .string()
   .trim()
   .toUpperCase()
-  .regex(/^[A-Z]{3}$/, "Use a 3-letter currency code")
+  .refine((value) => (SUPPORTED_CURRENCIES as readonly string[]).includes(value), {
+    message: "Choose a supported currency",
+  })
 
 const isoDateSchema = z
   .string()

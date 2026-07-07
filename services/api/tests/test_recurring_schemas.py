@@ -43,6 +43,17 @@ def test_create_currency_uppercased() -> None:
     assert r.currency == "USD"
 
 
+def test_create_currency_unsupported_code_fails() -> None:
+    with pytest.raises(ValidationError):
+        RecurringExpenseCreate(
+            category_id="cat-1",
+            description="Netflix",
+            amount=Decimal("500"),
+            currency="ZZZ",
+            start_on=date(2026, 1, 15),
+        )
+
+
 def test_create_blank_description_fails() -> None:
     with pytest.raises(ValidationError):
         RecurringExpenseCreate(

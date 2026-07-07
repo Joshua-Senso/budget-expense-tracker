@@ -467,7 +467,7 @@ def test_build_import_plan_rejects_invalid_currency() -> None:
     )
 
     assert len(errors) == 1
-    assert "3-letter ISO 4217 code" in errors[0]["messages"][0]
+    assert "currency must be one of" in errors[0]["messages"][0]
 
 
 def test_build_import_plan_rejects_invalid_date() -> None:

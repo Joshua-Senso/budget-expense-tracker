@@ -16,6 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
+from app.features.currency.codes import DEFAULT_CURRENCY
 
 
 class Expense(Base):
@@ -39,7 +40,9 @@ class Expense(Base):
     )
     description: Mapped[str] = mapped_column(String, nullable=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="PHP")
+    currency: Mapped[str] = mapped_column(
+        String(3), nullable=False, default=DEFAULT_CURRENCY
+    )
     spent_on: Mapped[date] = mapped_column(Date, nullable=False)
 
     # Reserved for M4 (installments)
@@ -71,6 +74,13 @@ class Expense(Base):
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_expenses_amount_positive"),
         CheckConstraint("description <> ''", name="ck_expenses_description_nonempty"),
+        # Keep in sync with app.features.currency.codes.SUPPORTED_CURRENCIES
+        CheckConstraint(
+            "currency IN ('AED', 'AUD', 'CAD', 'CHF', 'CNY', 'EUR', 'GBP', 'HKD', "
+            "'IDR', 'INR', 'JPY', 'KRW', 'MYR', 'NZD', 'PHP', 'SAR', 'SGD', 'THB', "
+            "'USD', 'VND')",
+            name="ck_expenses_currency_valid",
+        ),
         CheckConstraint(
             "(installment_group_id IS NULL AND installment_index IS NULL "
             "AND installment_total IS NULL AND original_description IS NULL) "

@@ -30,6 +30,16 @@ describe("expenseSchema", () => {
       expenseSchema.parse({ ...baseExpense, amount: 150.999 }),
     ).toThrow("Use no more than 2 decimal places")
   })
+
+  it("accepts a supported currency in lowercase", () => {
+    expect(() =>
+      expenseSchema.parse({ ...baseExpense, currency: "usd" }),
+    ).not.toThrow()
+  })
+
+  it("rejects an unsupported currency code", () => {
+    expect(() => expenseSchema.parse({ ...baseExpense, currency: "ZZZ" })).toThrow()
+  })
 })
 
 describe("createExpenseSchema", () => {
