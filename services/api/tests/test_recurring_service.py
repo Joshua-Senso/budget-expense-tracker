@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.core.households import HouseholdAccessError, HouseholdRoleError
+from app.features.currency.service import ExchangeRateRequiredError
 from app.features.recurring.models import RecurringExpense
 from app.features.recurring.service import (
     CategoryOwnershipError,
@@ -22,6 +23,17 @@ def _mock_db() -> MagicMock:
     return MagicMock()
 
 
+@pytest.fixture(autouse=True)
+def _default_base_currency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test below uses "PHP" rules; default the resolved base currency
+    to match so the same-currency short circuit applies and no test needs to
+    know about conversion unless it's specifically exercising it."""
+    monkeypatch.setattr(
+        "app.features.recurring.service.resolve_base_currency",
+        lambda *args, **kwargs: "PHP",
+    )
+
+
 def _make_rule(**kwargs) -> RecurringExpense:
     defaults = {
         "id": "rec-1",
@@ -30,6 +42,7 @@ def _make_rule(**kwargs) -> RecurringExpense:
         "description": "Netflix",
         "amount": Decimal("500.00"),
         "currency": "PHP",
+        "exchange_rate": None,
         "start_on": date(2026, 1, 15),
         "frequency": "monthly",
         "is_active": True,
@@ -60,6 +73,37 @@ def test_create_recurring_expense_happy_path() -> None:
     assert result.description == "Netflix"
     assert result.start_on == date(2026, 1, 15)
     assert result.end_on is None
+    assert result.exchange_rate is None
+
+
+def test_create_recurring_expense_stores_rate_when_currency_differs() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+
+    result = create_recurring_expense(
+        db,
+        "user-1",
+        "cat-1",
+        "Netflix",
+        Decimal("10"),
+        "USD",
+        date(2026, 1, 15),
+        exchange_rate=Decimal("56.00"),
+    )
+
+    assert result.exchange_rate == Decimal("56.00")
+
+
+def test_create_recurring_expense_requires_rate_when_currency_differs() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+
+    with pytest.raises(ExchangeRateRequiredError):
+        create_recurring_expense(
+            db, "user-1", "cat-1", "Netflix", Decimal("10"), "USD", date(2026, 1, 15)
+        )
+
+    db.add.assert_not_called()
 
 
 def test_create_recurring_expense_category_not_owned_raises() -> None:
@@ -237,7 +281,52 @@ def test_generate_recurring_expenses_creates_row_for_due_rule() -> None:
     assert added.recurring_expense_id == "rec-1"
     assert added.spent_on == date(2026, 7, 15)
     assert added.amount == Decimal("500.00")
+    assert added.base_amount == Decimal("500.00")
+    assert added.exchange_rate == Decimal("1")
     db.commit.assert_called_once()
+
+
+def test_generate_recurring_expenses_uses_rules_stored_rate() -> None:
+    db = _mock_db()
+    rule = _make_rule(
+        start_on=date(2026, 1, 15),
+        currency="USD",
+        amount=Decimal("10.00"),
+        exchange_rate=Decimal("56.00"),
+    )
+    db.execute.return_value.scalars.return_value.all.return_value = [rule]
+    db.scalar.side_effect = ["cat-1", None]
+
+    created = generate_recurring_expenses(db, 2026, 7)
+
+    assert created == 1
+    added = db.add.call_args[0][0]
+    assert added.base_amount == Decimal("560.00")
+    assert added.exchange_rate == Decimal("56.00")
+
+
+def test_generate_recurring_expenses_falls_back_when_rate_missing_after_base_currency_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edge case: the scope's base currency diverged from the rule's currency
+    after the rule was created with no rate needed at the time. The worker
+    has no user present to supply one now, so it records the occurrence
+    unconverted rather than dropping it from the batch."""
+    monkeypatch.setattr(
+        "app.features.recurring.service.resolve_base_currency",
+        lambda *args, **kwargs: "EUR",
+    )
+    db = _mock_db()
+    rule = _make_rule(start_on=date(2026, 1, 15), currency="USD", exchange_rate=None)
+    db.execute.return_value.scalars.return_value.all.return_value = [rule]
+    db.scalar.side_effect = ["cat-1", None]
+
+    created = generate_recurring_expenses(db, 2026, 7)
+
+    assert created == 1
+    added = db.add.call_args[0][0]
+    assert added.base_amount == rule.amount
+    assert added.exchange_rate == Decimal("1")
 
 
 def test_generate_recurring_expenses_is_idempotent() -> None:

@@ -75,6 +75,7 @@ CREATE TABLE organizations (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL,
     slug text NOT NULL UNIQUE,
+    "baseCurrency" text NOT NULL DEFAULT 'PHP',
     "createdAt" timestamptz NOT NULL DEFAULT now()
 )
 """

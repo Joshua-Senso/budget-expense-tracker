@@ -251,3 +251,46 @@ def test_update_amount_overflow_fails() -> None:
 def test_update_amount_extreme_magnitude_fails() -> None:
     with pytest.raises(ValidationError):
         ExpenseUpdate(amount=Decimal("1e30"))
+
+
+# --- exchange_rate ---
+
+
+def test_create_exchange_rate_optional() -> None:
+    e = ExpenseCreate(
+        category_id="cat-1",
+        description="Lunch",
+        amount=Decimal("100"),
+        currency="USD",
+        spent_on=date(2026, 7, 1),
+    )
+    assert e.exchange_rate is None
+
+
+def test_create_exchange_rate_accepted() -> None:
+    e = ExpenseCreate(
+        category_id="cat-1",
+        description="Lunch",
+        amount=Decimal("100"),
+        currency="USD",
+        spent_on=date(2026, 7, 1),
+        exchange_rate=Decimal("56.00"),
+    )
+    assert e.exchange_rate == Decimal("56.00")
+
+
+def test_create_exchange_rate_zero_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseCreate(
+            category_id="cat-1",
+            description="Lunch",
+            amount=Decimal("100"),
+            currency="USD",
+            spent_on=date(2026, 7, 1),
+            exchange_rate=Decimal("0"),
+        )
+
+
+def test_update_exchange_rate_negative_fails() -> None:
+    with pytest.raises(ValidationError):
+        ExpenseUpdate(exchange_rate=Decimal("-1"))

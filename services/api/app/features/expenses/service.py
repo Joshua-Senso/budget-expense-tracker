@@ -13,6 +13,11 @@ from app.core.households import (
     household_scope_clauses,
     locate_household_scoped_row,
 )
+from app.features.currency.service import (
+    convert_to_base,
+    month_key_for,
+    resolve_base_currency,
+)
 from app.features.expenses.models import Expense
 
 
@@ -72,9 +77,16 @@ def create_expense(
     currency: str,
     spent_on: date,
     household_id: str | None = None,
+    exchange_rate: Decimal | None = None,
 ) -> Expense:
     assert_household_scope(db, user_id, household_id)
     _assert_category_accessible(db, user_id, category_id, household_id)
+    base_currency = resolve_base_currency(
+        db, user_id, month_key_for(spent_on), household_id
+    )
+    base_amount, exchange_rate = convert_to_base(
+        amount, currency, base_currency, exchange_rate
+    )
     expense = Expense(
         user_id=user_id,
         category_id=category_id,
@@ -83,6 +95,8 @@ def create_expense(
         currency=currency,
         spent_on=spent_on,
         household_id=household_id,
+        base_amount=base_amount,
+        exchange_rate=exchange_rate,
     )
     db.add(expense)
     db.commit()
@@ -107,26 +121,43 @@ def create_installment_expenses(
     spent_on: date,
     installment_total: int,
     household_id: str | None = None,
+    exchange_rate: Decimal | None = None,
 ) -> list[Expense]:
     assert_household_scope(db, user_id, household_id)
     _assert_category_accessible(db, user_id, category_id, household_id)
     group_id = str(uuid.uuid4())
-    expenses = [
-        Expense(
-            user_id=user_id,
-            category_id=category_id,
-            description=f"{description} ({index}/{installment_total})",
-            amount=amount,
-            currency=currency,
-            spent_on=_add_months(spent_on, index - 1),
-            installment_group_id=group_id,
-            installment_index=index,
-            installment_total=installment_total,
-            original_description=description,
-            household_id=household_id,
+    # Resolved once for the whole plan, from the first occurrence's month --
+    # a single rate is captured once when the plan is entered, and it can
+    # only be valid against one target currency. Re-resolving per occurrence
+    # (a user's per-month base-currency preference can differ month to
+    # month) would risk applying that one rate against a different currency
+    # than it was meant for on a later occurrence.
+    base_currency = resolve_base_currency(
+        db, user_id, month_key_for(spent_on), household_id
+    )
+    base_amount, stored_rate = convert_to_base(
+        amount, currency, base_currency, exchange_rate
+    )
+    expenses = []
+    for index in range(1, installment_total + 1):
+        occurrence_spent_on = _add_months(spent_on, index - 1)
+        expenses.append(
+            Expense(
+                user_id=user_id,
+                category_id=category_id,
+                description=f"{description} ({index}/{installment_total})",
+                amount=amount,
+                currency=currency,
+                spent_on=occurrence_spent_on,
+                installment_group_id=group_id,
+                installment_index=index,
+                installment_total=installment_total,
+                original_description=description,
+                household_id=household_id,
+                base_amount=base_amount,
+                exchange_rate=stored_rate,
+            )
         )
-        for index in range(1, installment_total + 1)
-    ]
     db.add_all(expenses)
     db.commit()
     return list(
@@ -149,6 +180,7 @@ def update_expense(
     amount: Decimal | None = None,
     currency: str | None = None,
     spent_on: date | None = None,
+    exchange_rate: Decimal | None = None,
 ) -> Expense:
     expense = _locate_expense_for_mutation(db, user_id, expense_id)
 
@@ -164,6 +196,23 @@ def update_expense(
     ]:
         if value is not None:
             setattr(expense, attr, value)
+
+    # Only recompute when a conversion input actually changed this call.
+    # The stored rate is never reused across a recompute: it was captured
+    # against whatever base currency was active *then*, and nothing here
+    # records what that was, so there's no safe way to tell whether it's
+    # still valid for the base currency active *now* (which can drift --
+    # a household's or a user's base currency can change independently of
+    # this row). A call that doesn't touch amount/currency/exchange_rate
+    # leaves the existing base_amount/exchange_rate untouched rather than
+    # risk silently misapplying a stale rate.
+    if amount is not None or currency is not None or exchange_rate is not None:
+        base_currency = resolve_base_currency(
+            db, user_id, month_key_for(expense.spent_on), expense.household_id
+        )
+        expense.base_amount, expense.exchange_rate = convert_to_base(
+            expense.amount, expense.currency, base_currency, exchange_rate
+        )
 
     db.commit()
     return expense

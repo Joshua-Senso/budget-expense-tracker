@@ -48,6 +48,11 @@ class RecurringExpense(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     end_on: Mapped[date | None] = mapped_column(Date, nullable=True)
 
+    # Captured once at rule-creation time (no user is present when the
+    # worker generates each month's occurrence); NULL when currency already
+    # matched the base currency at creation, so no rate was ever needed.
+    exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+
     # Reserved for M6 (households)
     household_id: Mapped[str | None] = mapped_column(String, nullable=True)
 

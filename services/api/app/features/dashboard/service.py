@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.households import assert_household_scope, household_scope_clauses
 from app.features.budget.service import MonthlySettingNotFoundError, get_monthly_setting
 from app.features.categories.models import UserCategory
+from app.features.currency.service import month_key_for, resolve_base_currency
 from app.features.expenses.models import Expense
 
 _PERCENT_QUANT = Decimal("0.01")
@@ -47,7 +48,7 @@ def _category_totals(
             UserCategory.name,
             UserCategory.color,
             UserCategory.expense_group,
-            func.sum(Expense.amount),
+            func.sum(Expense.base_amount),
         )
         .join(Expense, Expense.category_id == UserCategory.id)
         .where(
@@ -75,7 +76,7 @@ def _monthly_group_totals(
         select(
             func.extract("month", Expense.spent_on),
             UserCategory.expense_group,
-            func.sum(Expense.amount),
+            func.sum(Expense.base_amount),
         )
         .join(Expense, Expense.category_id == UserCategory.id)
         .where(
@@ -119,7 +120,21 @@ def get_yearly_overview(
             }
         )
 
-    return {"year": year, "months": months, "year_total": year_total}
+    # A household's base currency doesn't vary by month; a personal base
+    # currency could in principle, but the yearly overview already reports
+    # one aggregated total per month rather than splitting by currency, so
+    # resolving against a single representative month (January) is the same
+    # simplification already implicit in that aggregation.
+    base_currency = resolve_base_currency(
+        db, user_id, month_key_for(date(year, 1, 1)), household_id
+    )
+
+    return {
+        "year": year,
+        "months": months,
+        "year_total": year_total,
+        "base_currency": base_currency,
+    }
 
 
 def get_dashboard_summary(
@@ -161,6 +176,8 @@ def get_dashboard_summary(
         else None
     )
 
+    base_currency = resolve_base_currency(db, user_id, month_key, household_id)
+
     return {
         "month_key": month_key,
         "card": {"total": totals["card"], "categories": groups["card"]},
@@ -169,4 +186,5 @@ def get_dashboard_summary(
         "monthly_net_salary": monthly_net_salary,
         "remaining": remaining,
         "percent_used": percent_used,
+        "base_currency": base_currency,
     }

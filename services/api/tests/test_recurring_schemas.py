@@ -104,3 +104,41 @@ def test_create_end_on_before_start_fails() -> None:
             start_on=date(2026, 6, 30),
             end_on=date(2026, 1, 15),
         )
+
+
+# --- exchange_rate ---
+
+
+def test_create_exchange_rate_optional() -> None:
+    r = RecurringExpenseCreate(
+        category_id="cat-1",
+        description="Netflix",
+        amount=Decimal("10"),
+        currency="USD",
+        start_on=date(2026, 1, 15),
+    )
+    assert r.exchange_rate is None
+
+
+def test_create_exchange_rate_accepted() -> None:
+    r = RecurringExpenseCreate(
+        category_id="cat-1",
+        description="Netflix",
+        amount=Decimal("10"),
+        currency="USD",
+        start_on=date(2026, 1, 15),
+        exchange_rate=Decimal("56.00"),
+    )
+    assert r.exchange_rate == Decimal("56.00")
+
+
+def test_create_exchange_rate_zero_fails() -> None:
+    with pytest.raises(ValidationError):
+        RecurringExpenseCreate(
+            category_id="cat-1",
+            description="Netflix",
+            amount=Decimal("10"),
+            currency="USD",
+            start_on=date(2026, 1, 15),
+            exchange_rate=Decimal("0"),
+        )

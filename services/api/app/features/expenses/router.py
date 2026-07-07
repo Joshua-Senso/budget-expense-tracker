@@ -12,6 +12,7 @@ from app.features.expenses.schemas import (
     ExpenseResponse,
     ExpenseUpdate,
 )
+from app.features.currency.service import ExchangeRateRequiredError
 from app.features.expenses.service import CategoryOwnershipError, ExpenseNotFoundError
 
 router = APIRouter(prefix="/expenses", tags=["expenses"])
@@ -46,9 +47,12 @@ def create_expense(
             body.currency,
             body.spent_on,
             household_id=body.household_id,
+            exchange_rate=body.exchange_rate,
         )
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
+    except ExchangeRateRequiredError as err:
+        raise HTTPException(status_code=422, detail=err.detail)
 
 
 @router.post(
@@ -72,9 +76,12 @@ def create_installment_expenses(
             body.spent_on,
             body.installment_total,
             household_id=body.household_id,
+            exchange_rate=body.exchange_rate,
         )
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
+    except ExchangeRateRequiredError as err:
+        raise HTTPException(status_code=422, detail=err.detail)
 
 
 @router.patch("/{expense_id}", response_model=ExpenseResponse)
@@ -94,11 +101,14 @@ def update_expense(
             amount=body.amount,
             currency=body.currency,
             spent_on=body.spent_on,
+            exchange_rate=body.exchange_rate,
         )
     except ExpenseNotFoundError:
         raise HTTPException(status_code=404, detail="Expense not found.")
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
+    except ExchangeRateRequiredError as err:
+        raise HTTPException(status_code=422, detail=err.detail)
 
 
 @router.delete("/{expense_id}", status_code=status.HTTP_204_NO_CONTENT)

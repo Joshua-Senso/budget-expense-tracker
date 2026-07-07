@@ -124,6 +124,44 @@ def test_get_dashboard_summary_uses_correct_month_bounds() -> None:
     assert "2026-02-28" in query_str
 
 
+def test_get_dashboard_summary_sums_base_amount_not_original_amount() -> None:
+    """Regression guard: totals must aggregate the converted base-currency
+    amount, not the original per-expense amount -- summing raw `amount`
+    across mixed currencies silently produces a wrong total (BUD-51)."""
+    db = _mock_db()
+    db.execute.return_value.all.return_value = []
+
+    with patch(
+        "app.features.dashboard.service.get_monthly_setting",
+        return_value=_make_setting(Decimal("1000.00")),
+    ):
+        get_dashboard_summary(db, "user-1", "2026-07")
+
+    executed_query = db.execute.call_args[0][0]
+    query_str = str(executed_query.compile(compile_kwargs={"literal_binds": True}))
+    assert "sum(expenses.base_amount)" in query_str.lower()
+    assert "sum(expenses.amount)" not in query_str.lower()
+
+
+def test_get_dashboard_summary_includes_resolved_base_currency() -> None:
+    db = _mock_db()
+    db.execute.return_value.all.return_value = []
+
+    with (
+        patch(
+            "app.features.dashboard.service.get_monthly_setting",
+            return_value=_make_setting(Decimal("1000.00")),
+        ),
+        patch(
+            "app.features.dashboard.service.resolve_base_currency",
+            return_value="USD",
+        ),
+    ):
+        result = get_dashboard_summary(db, "user-1", "2026-07")
+
+    assert result["base_currency"] == "USD"
+
+
 def test_get_dashboard_summary_query_scopes_categories_to_owner() -> None:
     # Regression guard: the join must not rely solely on expenses.user_id —
     # it must also assert user_categories.user_id/household_id so a future
@@ -203,6 +241,18 @@ def test_get_yearly_overview_uses_correct_year_bounds() -> None:
     query_str = str(executed_query.compile(compile_kwargs={"literal_binds": True}))
     assert "2026-01-01" in query_str
     assert "2026-12-31" in query_str
+
+
+def test_get_yearly_overview_includes_resolved_base_currency() -> None:
+    db = _mock_db()
+    db.execute.return_value.all.return_value = []
+
+    with patch(
+        "app.features.dashboard.service.resolve_base_currency", return_value="EUR"
+    ):
+        result = get_yearly_overview(db, "user-1", 2026)
+
+    assert result["base_currency"] == "EUR"
 
 
 def test_get_yearly_overview_query_scopes_categories_to_owner() -> None:

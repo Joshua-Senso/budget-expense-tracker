@@ -70,6 +70,19 @@ def _make_rule(**kwargs) -> RecurringExpense:
     return rule
 
 
+@pytest.fixture(autouse=True)
+def _default_base_currency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Import rows default to "PHP" in these tests; default the resolved
+    base currency to match so the same-currency short circuit applies for
+    them. A row in a different currency has no interactive moment to supply
+    a rate, so it falls back to unconverted (see `_convert_for_import`) --
+    exercised explicitly by the currency-mismatch test below."""
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_base_currency",
+        lambda *args, **kwargs: "PHP",
+    )
+
+
 def _queue_db(db: MagicMock, *result_sets) -> None:
     """Chain db.execute(...).all()/.scalars().all() return values in call order."""
     execute_results = []
@@ -646,11 +659,18 @@ def test_apply_import_plan_inserts_updates_and_deletes() -> None:
     db.add.assert_called_once()
     added_expense = db.add.call_args[0][0]
     assert added_expense.description == "New expense"
+    assert added_expense.base_amount == Decimal("10.00")
+    assert added_expense.exchange_rate == Decimal("1")
     assert expense.category_id == "cat-2"
     assert expense.description == "Updated"
     assert expense.amount == Decimal("20.00")
     assert expense.currency == "USD"
     assert expense.spent_on == date(2026, 2, 1)
+    # USD != the resolved base currency (PHP) and import has no interactive
+    # moment to supply a rate, so it falls back to unconverted (BUD-54 will
+    # address faithful cross-currency import conversion).
+    assert expense.base_amount == Decimal("20.00")
+    assert expense.exchange_rate == Decimal("1")
     db.commit.assert_called_once()
 
 

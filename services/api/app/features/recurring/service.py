@@ -12,6 +12,12 @@ from app.core.households import (
     household_scope_clauses,
     locate_household_scoped_row,
 )
+from app.features.currency.service import (
+    convert_to_base,
+    convert_to_base_or_unconverted,
+    month_key_for,
+    resolve_base_currency,
+)
 from app.features.expenses.models import Expense
 from app.features.recurring.models import RecurringExpense
 from app.features.recurring.schemas import ProjectedExpense
@@ -82,9 +88,16 @@ def create_recurring_expense(
     start_on: date,
     end_on: date | None = None,
     household_id: str | None = None,
+    exchange_rate: Decimal | None = None,
 ) -> RecurringExpense:
     assert_household_scope(db, user_id, household_id)
     _assert_category_accessible(db, user_id, category_id, household_id)
+    # Captured once here, not per generated occurrence -- the worker that
+    # generates future months' rows has no user present to supply a rate.
+    base_currency = resolve_base_currency(
+        db, user_id, month_key_for(start_on), household_id
+    )
+    _, exchange_rate = convert_to_base(amount, currency, base_currency, exchange_rate)
     recurring = RecurringExpense(
         user_id=user_id,
         category_id=category_id,
@@ -94,6 +107,7 @@ def create_recurring_expense(
         start_on=start_on,
         end_on=end_on,
         household_id=household_id,
+        exchange_rate=exchange_rate if currency != base_currency else None,
     )
     db.add(recurring)
     db.commit()
@@ -218,6 +232,19 @@ def generate_recurring_expenses(db: Session, year: int, month: int) -> int:
         if exists is not None:
             continue
 
+        # Edge case: the scope's base currency drifted after the rule was
+        # created (with no rate needed, or a rate for a currency pair that
+        # no longer applies) and there's no user present to supply a fresh
+        # one now. Record this occurrence unconverted rather than dropping
+        # it from the whole batch (same resilience as the inaccessible-
+        # category skip above, which also can't abort the rest of the run).
+        base_currency = resolve_base_currency(
+            db, rule.user_id, month_key_for(spent_on), rule.household_id
+        )
+        base_amount, exchange_rate = convert_to_base_or_unconverted(
+            rule.amount, rule.currency, base_currency, rule.exchange_rate
+        )
+
         try:
             with db.begin_nested():
                 db.add(
@@ -230,6 +257,8 @@ def generate_recurring_expenses(db: Session, year: int, month: int) -> int:
                         currency=rule.currency,
                         spent_on=spent_on,
                         recurring_expense_id=rule.id,
+                        base_amount=base_amount,
+                        exchange_rate=exchange_rate,
                     )
                 )
                 db.flush()

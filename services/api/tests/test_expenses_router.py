@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from app.core.households import HouseholdAccessError, HouseholdRoleError
+from app.features.currency.service import ExchangeRateRequiredError
 from app.features.expenses.models import Expense
 from app.features.expenses.service import CategoryOwnershipError, ExpenseNotFoundError
 from app.main import create_app
@@ -63,6 +64,8 @@ def _make_expense(**kwargs: Any) -> Expense:
         "description": "Lunch",
         "amount": Decimal("150.00"),
         "currency": "PHP",
+        "base_amount": Decimal("150.00"),
+        "exchange_rate": Decimal("1"),
         "spent_on": date(2026, 7, 1),
         "created_at": datetime(2026, 7, 1, tzinfo=UTC),
         "updated_at": datetime(2026, 7, 1, tzinfo=UTC),
@@ -116,7 +119,7 @@ def test_list_expenses_returns_404_when_not_a_household_member(monkeypatch) -> N
 def test_create_expense_returns_201(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.features.expenses.router.service.create_expense",
-        lambda db, user_id, category_id, description, amount, currency, spent_on, household_id=None: (
+        lambda db, user_id, category_id, description, amount, currency, spent_on, household_id=None, exchange_rate=None: (
             _make_expense()
         ),
     )
@@ -147,6 +150,7 @@ def test_create_expense_returns_404_when_category_not_owned(monkeypatch) -> None
         currency,
         spent_on,
         household_id=None,
+        exchange_rate=None,
     ):
         raise CategoryOwnershipError(category_id)
 
@@ -180,6 +184,7 @@ def test_create_expense_returns_404_when_not_a_household_member(monkeypatch) -> 
         currency,
         spent_on,
         household_id=None,
+        exchange_rate=None,
     ):
         raise HouseholdAccessError(household_id)
 
@@ -204,12 +209,55 @@ def test_create_expense_returns_404_when_not_a_household_member(monkeypatch) -> 
     assert response.status_code == 404
 
 
+def test_create_expense_returns_422_when_exchange_rate_missing(monkeypatch) -> None:
+    def raise_rate_required(
+        db,
+        user_id,
+        category_id,
+        description,
+        amount,
+        currency,
+        spent_on,
+        household_id=None,
+        exchange_rate=None,
+    ):
+        raise ExchangeRateRequiredError(currency, "PHP")
+
+    monkeypatch.setattr(
+        "app.features.expenses.router.service.create_expense", raise_rate_required
+    )
+    client, token = _authed_client(monkeypatch)
+
+    response = client.post(
+        "/expenses",
+        headers=_auth_header(token),
+        json={
+            "category_id": "cat-1",
+            "description": "Lunch",
+            "amount": "100.00",
+            "currency": "USD",
+            "spent_on": "2026-07-01",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "USD" in response.json()["detail"]
+
+
 # --- update ---
 
 
 def test_update_expense_returns_404_when_not_found(monkeypatch) -> None:
     def raise_not_found(
-        db, user_id, expense_id, category_id, description, amount, currency, spent_on
+        db,
+        user_id,
+        expense_id,
+        category_id,
+        description,
+        amount,
+        currency,
+        spent_on,
+        exchange_rate=None,
     ):
         raise ExpenseNotFoundError(expense_id)
 
@@ -227,7 +275,15 @@ def test_update_expense_returns_404_when_not_found(monkeypatch) -> None:
 
 def test_update_expense_returns_403_when_not_owner_of_shared_row(monkeypatch) -> None:
     def raise_role_error(
-        db, user_id, expense_id, category_id, description, amount, currency, spent_on
+        db,
+        user_id,
+        expense_id,
+        category_id,
+        description,
+        amount,
+        currency,
+        spent_on,
+        exchange_rate=None,
     ):
         raise HouseholdRoleError("house-1")
 
