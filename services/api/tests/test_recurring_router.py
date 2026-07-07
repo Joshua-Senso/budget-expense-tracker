@@ -7,6 +7,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 
 from app.core.households import HouseholdAccessError, HouseholdRoleError
+from app.features.currency.service import ExchangeRateRequiredError
 from app.features.recurring.models import RecurringExpense
 from app.features.recurring.service import (
     CategoryOwnershipError,
@@ -112,7 +113,7 @@ def test_list_recurring_expenses_returns_404_when_not_a_household_member(
 def test_create_recurring_expense_returns_201(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.features.recurring.router.service.create_recurring_expense",
-        lambda db, user_id, category_id, description, amount, currency, start_on, end_on, household_id=None: (
+        lambda db, user_id, category_id, description, amount, currency, start_on, end_on, household_id=None, exchange_rate=None: (
             _make_recurring()
         ),
     )
@@ -146,6 +147,7 @@ def test_create_recurring_expense_returns_404_when_category_not_owned(
         start_on,
         end_on,
         household_id=None,
+        exchange_rate=None,
     ):
         raise CategoryOwnershipError(category_id)
 
@@ -183,6 +185,7 @@ def test_create_recurring_expense_returns_404_when_not_a_household_member(
         start_on,
         end_on,
         household_id=None,
+        exchange_rate=None,
     ):
         raise HouseholdAccessError(household_id)
 
@@ -206,6 +209,45 @@ def test_create_recurring_expense_returns_404_when_not_a_household_member(
     )
 
     assert response.status_code == 404
+
+
+def test_create_recurring_expense_returns_422_when_exchange_rate_missing(
+    monkeypatch,
+) -> None:
+    def raise_rate_required(
+        db,
+        user_id,
+        category_id,
+        description,
+        amount,
+        currency,
+        start_on,
+        end_on,
+        household_id=None,
+        exchange_rate=None,
+    ):
+        raise ExchangeRateRequiredError(currency, "PHP")
+
+    monkeypatch.setattr(
+        "app.features.recurring.router.service.create_recurring_expense",
+        raise_rate_required,
+    )
+    client, token = _authed_client(monkeypatch)
+
+    response = client.post(
+        "/recurring",
+        headers=_auth_header(token),
+        json={
+            "category_id": "cat-1",
+            "description": "Netflix",
+            "amount": "10.00",
+            "currency": "USD",
+            "start_on": "2026-01-01",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "USD" in response.json()["detail"]
 
 
 # --- stop (deactivate) ---

@@ -57,9 +57,11 @@ class Expense(Base):
     # Reserved for M6 (households)
     household_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    # Reserved for M7 (multi-currency conversion)
-    base_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
-    exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 6), nullable=True)
+    # Converted amount in the scope's base currency + the rate used (PRD
+    # §7.10, §9.2). Always populated -- 1:1 with `amount` when currency
+    # already equals the base currency.
+    base_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    exchange_rate: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

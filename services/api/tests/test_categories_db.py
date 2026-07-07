@@ -72,6 +72,8 @@ def test_delete_category_blocked_when_expense_inserted_after_in_use_check(
                     description="Concurrent insert",
                     amount=Decimal("10.00"),
                     currency="PHP",
+                    base_amount=Decimal("10.00"),
+                    exchange_rate=Decimal("1"),
                     spent_on=date(2026, 7, 1),
                 )
             )

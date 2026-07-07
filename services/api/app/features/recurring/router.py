@@ -9,6 +9,7 @@ from app.features.recurring.schemas import (
     RecurringExpenseCreate,
     RecurringExpenseResponse,
 )
+from app.features.currency.service import ExchangeRateRequiredError
 from app.features.recurring.service import (
     CategoryOwnershipError,
     RecurringExpenseNotFoundError,
@@ -52,9 +53,12 @@ def create_recurring_expense(
             body.start_on,
             body.end_on,
             household_id=body.household_id,
+            exchange_rate=body.exchange_rate,
         )
     except CategoryOwnershipError:
         raise HTTPException(status_code=404, detail="Category not found.")
+    except ExchangeRateRequiredError as err:
+        raise HTTPException(status_code=422, detail=err.detail)
 
 
 @router.get("/projection/{month_key}", response_model=list[ProjectedExpense])

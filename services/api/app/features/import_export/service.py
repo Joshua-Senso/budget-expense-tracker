@@ -11,6 +11,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.features.categories.models import UserCategory
+from app.features.currency.service import (
+    convert_to_base_or_unconverted,
+    month_key_for,
+    resolve_base_currency,
+)
 from app.features.expenses.models import Expense
 from app.features.expenses.schemas import _validate_amount, _validate_currency
 from app.features.import_export.schemas import ImportSummary
@@ -516,6 +521,23 @@ def build_import_plan(
     return inserts, updates, delete_ids, errors
 
 
+def _convert_for_import(
+    db: Session, user_id: str, amount: Decimal, currency: str, spent_on: date
+) -> tuple[Decimal, Decimal]:
+    """Import is personal-scope only and has no interactive moment to
+    capture a rate per row (unlike the create/update endpoints). Preserving
+    currency/conversion faithfully through import is BUD-54's job; for now,
+    fall back to recording the row unconverted rather than failing the whole
+    import when a rate would be required.
+    """
+    base_currency = resolve_base_currency(
+        db, user_id, month_key_for(spent_on), household_id=None
+    )
+    return convert_to_base_or_unconverted(
+        amount, currency, base_currency, exchange_rate=None
+    )
+
+
 def apply_import_plan(
     db: Session,
     user_id: str,
@@ -538,8 +560,14 @@ def apply_import_plan(
         update.expense.amount = update.amount
         update.expense.currency = update.currency
         update.expense.spent_on = update.spent_on
+        update.expense.base_amount, update.expense.exchange_rate = _convert_for_import(
+            db, user_id, update.amount, update.currency, update.spent_on
+        )
 
     for insert in inserts:
+        base_amount, exchange_rate = _convert_for_import(
+            db, user_id, insert.amount, insert.currency, insert.spent_on
+        )
         db.add(
             Expense(
                 user_id=user_id,
@@ -548,6 +576,8 @@ def apply_import_plan(
                 amount=insert.amount,
                 currency=insert.currency,
                 spent_on=insert.spent_on,
+                base_amount=base_amount,
+                exchange_rate=exchange_rate,
             )
         )
 

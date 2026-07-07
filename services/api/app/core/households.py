@@ -45,6 +45,39 @@ class Member(Base):
     role: Mapped[str] = mapped_column(String, nullable=False)
 
 
+class Organization(Base):
+    """Read-only mapping onto Better Auth's `organizations` table (household).
+
+    Better Auth owns this table's schema and migrations; the API only ever
+    reads `base_currency` off it (PRD §9.5 -- a household's base currency
+    extends the organization record rather than living in a separate table).
+    Deliberately not imported by `import_app_models()` -- Alembic must never
+    manage or diff it.
+    """
+
+    __tablename__ = "organizations"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True)
+    base_currency: Mapped[str] = mapped_column("baseCurrency", String, nullable=False)
+
+
+def get_household_base_currency(db: Session, household_id: str) -> str | None:
+    try:
+        return db.scalar(
+            select(Organization.base_currency).where(Organization.id == household_id)
+        )
+    except DataError:
+        # See the matching comment on get_household_role: organization ids
+        # are real Postgres `uuid` columns, so a malformed id fails the cast
+        # at the DB level -- roll back so the aborted transaction doesn't
+        # break the rest of the request. Every current caller already runs
+        # assert_household_scope (via get_household_role) first, so this
+        # isn't reachable today, but resolve_base_currency shouldn't rely on
+        # that ordering to avoid a 500 here.
+        db.rollback()
+        return None
+
+
 def get_household_role(db: Session, user_id: str, household_id: str) -> str | None:
     try:
         return db.scalar(

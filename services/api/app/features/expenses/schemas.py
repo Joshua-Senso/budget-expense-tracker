@@ -4,6 +4,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pydantic import BaseModel, field_validator
 
 from app.features.currency.codes import DEFAULT_CURRENCY, SUPPORTED_CURRENCIES
+from app.features.currency.service import validate_exchange_rate
 
 
 _MAX_AMOUNT = Decimal("9999999999.99")
@@ -39,6 +40,7 @@ class ExpenseCreate(BaseModel):
     currency: str = DEFAULT_CURRENCY
     spent_on: date
     household_id: str | None = None
+    exchange_rate: Decimal | None = None
 
     @field_validator("description")
     @classmethod
@@ -57,6 +59,11 @@ class ExpenseCreate(BaseModel):
     @classmethod
     def currency_valid(cls, v: str) -> str:
         return _validate_currency(v)
+
+    @field_validator("exchange_rate")
+    @classmethod
+    def exchange_rate_valid(cls, v: Decimal | None) -> Decimal | None:
+        return validate_exchange_rate(v)
 
 
 class ExpenseInstallmentCreate(ExpenseCreate):
@@ -79,6 +86,7 @@ class ExpenseUpdate(BaseModel):
     amount: Decimal | None = None
     currency: str | None = None
     spent_on: date | None = None
+    exchange_rate: Decimal | None = None
 
     @field_validator("description")
     @classmethod
@@ -100,6 +108,11 @@ class ExpenseUpdate(BaseModel):
     def currency_valid(cls, v: str | None) -> str | None:
         return _validate_currency(v) if v is not None else None
 
+    @field_validator("exchange_rate")
+    @classmethod
+    def exchange_rate_valid(cls, v: Decimal | None) -> Decimal | None:
+        return validate_exchange_rate(v)
+
 
 class ExpenseResponse(BaseModel):
     id: str
@@ -109,6 +122,8 @@ class ExpenseResponse(BaseModel):
     description: str
     amount: Decimal
     currency: str
+    base_amount: Decimal
+    exchange_rate: Decimal
     spent_on: date
     installment_group_id: str | None = None
     installment_index: int | None = None

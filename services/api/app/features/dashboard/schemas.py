@@ -23,6 +23,7 @@ class DashboardSummaryResponse(BaseModel):
     monthly_net_salary: Decimal | None
     remaining: Decimal | None
     percent_used: Decimal | None
+    base_currency: str
 
 
 class MonthlyOverview(BaseModel):
@@ -37,3 +38,4 @@ class YearlyOverviewResponse(BaseModel):
     year: int
     months: list[MonthlyOverview]
     year_total: Decimal
+    base_currency: str

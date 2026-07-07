@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.core.households import HouseholdAccessError, HouseholdRoleError
+from app.features.currency.service import ExchangeRateRequiredError
 from app.features.expenses.models import Expense
 from app.features.expenses.service import (
     CategoryOwnershipError,
@@ -21,6 +22,18 @@ def _mock_db() -> MagicMock:
     return MagicMock()
 
 
+@pytest.fixture(autouse=True)
+def _default_base_currency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test below uses "PHP" expenses; default the resolved base
+    currency to match so the same-currency short circuit applies and no
+    test needs to know about conversion unless it's specifically exercising
+    it. Conversion-specific tests override this per-test."""
+    monkeypatch.setattr(
+        "app.features.expenses.service.resolve_base_currency",
+        lambda *args, **kwargs: "PHP",
+    )
+
+
 def _make_expense(**kwargs) -> Expense:
     defaults = {
         "id": "exp-1",
@@ -29,6 +42,8 @@ def _make_expense(**kwargs) -> Expense:
         "description": "Lunch",
         "amount": Decimal("150.00"),
         "currency": "PHP",
+        "base_amount": Decimal("150.00"),
+        "exchange_rate": Decimal("1"),
         "spent_on": date(2026, 7, 1),
         "household_id": None,
     }
@@ -102,6 +117,39 @@ def test_create_expense_happy_path() -> None:
     assert result.description == "Lunch"
     assert result.amount == Decimal("150")
     assert result.currency == "PHP"
+    assert result.base_amount == Decimal("150.00")
+    assert result.exchange_rate == Decimal("1")
+
+
+def test_create_expense_computes_base_amount_when_currency_differs() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+
+    result = create_expense(
+        db,
+        "user-1",
+        "cat-1",
+        "Lunch",
+        Decimal("100"),
+        "USD",
+        date(2026, 7, 1),
+        exchange_rate=Decimal("56.00"),
+    )
+
+    assert result.base_amount == Decimal("5600.00")
+    assert result.exchange_rate == Decimal("56.00")
+
+
+def test_create_expense_raises_when_rate_missing_for_differing_currency() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+
+    with pytest.raises(ExchangeRateRequiredError):
+        create_expense(
+            db, "user-1", "cat-1", "Lunch", Decimal("100"), "USD", date(2026, 7, 1)
+        )
+
+    db.add.assert_not_called()
 
 
 def test_create_expense_category_not_owned_raises() -> None:
@@ -155,6 +203,29 @@ def test_create_installment_expenses_generates_one_row_per_term() -> None:
     assert [e.description for e in result] == ["TV (1/3)", "TV (2/3)", "TV (3/3)"]
     group_ids = {e.installment_group_id for e in result}
     assert len(group_ids) == 1
+    assert all(e.base_amount == e.amount for e in result)
+    assert all(e.exchange_rate == Decimal("1") for e in result)
+
+
+def test_create_installment_expenses_applies_single_rate_to_every_occurrence() -> None:
+    db = _mock_db()
+    db.scalar.return_value = "cat-1"
+    _stub_installment_requery(db)
+
+    result = create_installment_expenses(
+        db,
+        "user-1",
+        "cat-1",
+        "TV",
+        Decimal("100"),
+        "USD",
+        date(2026, 7, 1),
+        3,
+        exchange_rate=Decimal("56.00"),
+    )
+
+    assert all(e.base_amount == Decimal("5600.00") for e in result)
+    assert all(e.exchange_rate == Decimal("56.00") for e in result)
 
 
 def test_create_installment_expenses_clamps_month_end_day() -> None:
@@ -228,6 +299,126 @@ def test_update_expense_no_fields_is_noop() -> None:
     db.commit.assert_called_once()
     assert result is exp
     assert exp.description == "Lunch"
+
+
+def test_update_expense_recomputes_base_amount_when_currency_changes() -> None:
+    db = _mock_db()
+    exp = _make_expense()
+    db.get.return_value = exp
+
+    result = update_expense(
+        db, "user-1", "exp-1", currency="USD", exchange_rate=Decimal("56.00")
+    )
+
+    assert result.currency == "USD"
+    assert result.base_amount == Decimal("8400.00")
+    assert result.exchange_rate == Decimal("56.00")
+
+
+def test_update_expense_requires_rate_when_new_currency_differs_from_base() -> None:
+    db = _mock_db()
+    exp = _make_expense()
+    db.get.return_value = exp
+
+    with pytest.raises(ExchangeRateRequiredError):
+        update_expense(db, "user-1", "exp-1", currency="USD")
+
+
+def test_update_expense_leaves_conversion_untouched_when_not_resupplied() -> None:
+    """Editing an unrelated field (not currency/amount/rate) on a
+    non-base-currency row must not force the caller to resend the rate --
+    and must not silently recompute against whatever the base currency
+    happens to be *now*, since there's no record of what it was when the
+    stored rate was captured (see the comment in update_expense)."""
+    db = _mock_db()
+    exp = _make_expense(
+        currency="USD",
+        amount=Decimal("100.00"),
+        base_amount=Decimal("5600.00"),
+        exchange_rate=Decimal("56.00"),
+    )
+    db.get.return_value = exp
+
+    result = update_expense(db, "user-1", "exp-1", description="Dinner")
+
+    assert result.description == "Dinner"
+    assert result.exchange_rate == Decimal("56.00")
+    assert result.base_amount == Decimal("5600.00")
+
+
+def test_update_expense_does_not_misapply_stale_rate_after_base_currency_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard: if the scope's base currency drifts after a row is
+    saved, an update that doesn't touch amount/currency/exchange_rate must
+    not silently recompute base_amount against the new base currency using
+    the old rate -- that rate was captured for the *old* base currency and
+    is not valid for the new one."""
+    monkeypatch.setattr(
+        "app.features.expenses.service.resolve_base_currency",
+        lambda *args, **kwargs: "EUR",
+    )
+    db = _mock_db()
+    exp = _make_expense(
+        currency="USD",
+        amount=Decimal("100.00"),
+        base_amount=Decimal("5600.00"),
+        exchange_rate=Decimal("56.00"),
+    )
+    db.get.return_value = exp
+
+    result = update_expense(db, "user-1", "exp-1", description="Dinner")
+
+    assert result.base_amount == Decimal("5600.00")
+    assert result.exchange_rate == Decimal("56.00")
+
+
+def test_update_expense_recomputes_when_spent_on_moves_to_different_base_currency_month(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard: a personal base currency is resolved per-month, so
+    moving a row's spent_on into a different month can change which base
+    currency it resolves against even though currency/amount/exchange_rate
+    weren't touched. If the recompute isn't triggered, the row keeps its old
+    month's base_amount but is now aggregated into the new month's totals
+    under a different (mismatched) base currency."""
+
+    def base_currency_by_month(
+        db: object, user_id: str, month_key: str, household_id: str | None
+    ) -> str:
+        del db, user_id, household_id
+        return "PHP" if month_key == "2026-07" else "EUR"
+
+    monkeypatch.setattr(
+        "app.features.expenses.service.resolve_base_currency", base_currency_by_month
+    )
+    db = _mock_db()
+    exp = _make_expense(currency="PHP", spent_on=date(2026, 7, 1))
+    db.get.return_value = exp
+
+    with pytest.raises(ExchangeRateRequiredError):
+        update_expense(db, "user-1", "exp-1", spent_on=date(2026, 8, 1))
+
+
+def test_update_expense_recomputes_spent_on_move_when_base_currency_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Moving spent_on into a month that resolves to the *same* base
+    currency should recompute cleanly with no rate required."""
+
+    monkeypatch.setattr(
+        "app.features.expenses.service.resolve_base_currency",
+        lambda *args, **kwargs: "PHP",
+    )
+    db = _mock_db()
+    exp = _make_expense(currency="PHP", spent_on=date(2026, 7, 1))
+    db.get.return_value = exp
+
+    result = update_expense(db, "user-1", "exp-1", spent_on=date(2026, 8, 1))
+
+    assert result.spent_on == date(2026, 8, 1)
+    assert result.base_amount == Decimal("150.00")
+    assert result.exchange_rate == Decimal("1")
 
 
 # --- delete_expense ---

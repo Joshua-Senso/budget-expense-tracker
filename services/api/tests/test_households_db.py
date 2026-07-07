@@ -21,6 +21,7 @@ from app.core.db import SessionLocal, engine
 from app.core.households import (
     HouseholdAccessError,
     assert_household_member,
+    get_household_base_currency,
     get_household_role,
     is_household_member,
 )
@@ -41,6 +42,7 @@ CREATE TABLE organizations (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL,
     slug text NOT NULL UNIQUE,
+    "baseCurrency" text NOT NULL DEFAULT 'PHP',
     "createdAt" timestamptz NOT NULL DEFAULT now()
 )
 """
@@ -166,6 +168,38 @@ def test_malformed_household_id_is_not_a_member_against_real_postgres() -> None:
         assert db.execute(text("SELECT 1")).scalar() == 1
     finally:
         db.rollback()
+        db.close()
+        if created_tables:
+            _drop_better_auth_tables()
+
+
+def test_get_household_base_currency_reads_organizations_base_currency_column() -> None:
+    """Regression guard: `organizations."baseCurrency"` (Better Auth org
+    field, BUD-51) must be readable through the same real-Postgres-uuid
+    `Organization.id` lookup as `Member` above -- BUD-51's household-scope
+    conversion depends on this column resolving correctly.
+    """
+    created_tables = _ensure_better_auth_tables()
+    db = SessionLocal()
+    household_id = str(uuid.uuid4())
+    try:
+        db.execute(
+            text(
+                'INSERT INTO organizations (id, name, slug, "baseCurrency", "createdAt") '
+                "VALUES (:id, 'Test Household', :slug, 'USD', now())"
+            ),
+            {"id": household_id, "slug": household_id},
+        )
+        db.commit()
+
+        assert get_household_base_currency(db, household_id) == "USD"
+        assert get_household_base_currency(db, str(uuid.uuid4())) is None
+    finally:
+        db.rollback()
+        db.execute(
+            text("DELETE FROM organizations WHERE id = :id"), {"id": household_id}
+        )
+        db.commit()
         db.close()
         if created_tables:
             _drop_better_auth_tables()
