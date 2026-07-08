@@ -1,11 +1,31 @@
 "use client"
 
-import { organizationClient, jwtClient } from "better-auth/client/plugins"
+import {
+  organizationClient,
+  jwtClient,
+  inferAdditionalFields,
+} from "better-auth/client/plugins"
 import { createAuthClient } from "better-auth/react"
 
 const authClient = createAuthClient({
   baseURL: process.env.NEXT_PUBLIC_AUTH_URL,
-  plugins: [organizationClient(), jwtClient()],
+  plugins: [
+    // Frontend and services/auth are separate deployables (no shared pnpm
+    // workspace), so additionalFields are typed here via an inline schema
+    // literal rather than `typeof auth` -- keep these in sync with the
+    // matching fields in services/auth/src/auth.ts.
+    organizationClient({
+      schema: {
+        organization: {
+          additionalFields: { theme: { type: "string", required: false } as const },
+        },
+      },
+    }),
+    inferAdditionalFields({
+      user: { theme: { type: "string", required: false } as const },
+    }),
+    jwtClient(),
+  ],
 })
 
 const tokenPath = "/token"

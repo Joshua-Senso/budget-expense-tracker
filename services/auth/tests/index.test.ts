@@ -51,6 +51,18 @@ describe("auth config", () => {
     expect(pluginIds).toContain("jwt")
     expect(pluginIds).toContain("organization")
   })
+
+  test("extends the user record with a personal-workspace theme instead of a new table", async () => {
+    const { getAuthTables } = await import("better-auth/db")
+    const { auth } = await import("../src/auth")
+    const tables = getAuthTables(auth.options)
+
+    expect(tables.user?.fields.theme).toMatchObject({
+      type: "string",
+      required: false,
+      defaultValue: "dark",
+    })
+  })
 })
 
 describe("households (organization plugin)", () => {

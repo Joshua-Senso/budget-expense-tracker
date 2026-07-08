@@ -4,6 +4,7 @@ type Household = {
   id: string
   name: string
   slug: string
+  theme: string
 }
 
 const slugRegex = /^[a-z0-9-]+$/

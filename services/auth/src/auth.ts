@@ -26,7 +26,16 @@ export const auth = betterAuth({
   secret: env.secret,
   baseURL: env.baseUrl,
   trustedOrigins: env.trustedOrigins,
-  user: { modelName: "users" },
+  user: {
+    modelName: "users",
+    additionalFields: {
+      // Personal-workspace theme extends the user record instead of a new
+      // table (PRD §9.5, ARCHITECTURE §7). `required: false` (not `input:
+      // false`) keeps it writable via `updateUser`, mirroring
+      // organization.theme below.
+      theme: { type: "string", required: false, defaultValue: "dark" },
+    },
+  },
   session: { modelName: "sessions" },
   verification: { modelName: "verifications" },
   socialProviders: {

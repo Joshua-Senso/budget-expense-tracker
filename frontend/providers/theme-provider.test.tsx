@@ -1,12 +1,13 @@
 import { act, render, screen } from "@testing-library/react"
 import { beforeEach, expect, test, vi } from "vitest"
 
-import { useWorkspaceStore } from "@/stores/workspace-store"
-
 const themeProviderMock = vi.hoisted(() => ({
   props: vi.fn(),
   setTheme: vi.fn(),
-  resolvedTheme: "dark",
+}))
+
+const workspaceThemeMock = vi.hoisted(() => ({
+  useWorkspaceTheme: vi.fn(),
 }))
 
 vi.mock("next-themes", () => ({
@@ -14,10 +15,11 @@ vi.mock("next-themes", () => ({
     themeProviderMock.props(props)
     return <>{children}</>
   },
-  useTheme: () => ({
-    resolvedTheme: themeProviderMock.resolvedTheme,
-    setTheme: themeProviderMock.setTheme,
-  }),
+  useTheme: () => ({ setTheme: themeProviderMock.setTheme }),
+}))
+
+vi.mock("@/features/theme", () => ({
+  useWorkspaceTheme: workspaceThemeMock.useWorkspaceTheme,
 }))
 
 import { ThemeProvider } from "./theme-provider"
@@ -25,11 +27,11 @@ import { ThemeProvider } from "./theme-provider"
 beforeEach(() => {
   themeProviderMock.props.mockReset()
   themeProviderMock.setTheme.mockReset()
-  themeProviderMock.resolvedTheme = "dark"
-  localStorage.clear()
-  useWorkspaceStore.setState({
-    activeWorkspaceId: null,
-    activeWorkspaceScope: "personal",
+  workspaceThemeMock.useWorkspaceTheme.mockReset()
+  workspaceThemeMock.useWorkspaceTheme.mockReturnValue({
+    theme: "dark",
+    isPending: false,
+    scope: "personal",
   })
 })
 
@@ -50,13 +52,40 @@ test("theme provider defaults to warm dark instead of system", () => {
   )
 })
 
-test("applies the active workspace's saved theme when switching workspaces", () => {
-  localStorage.setItem(
-    "workspace-themes",
-    JSON.stringify({ "household:house-1": "light" }),
-  )
+test("applies the active workspace's stored theme once it resolves", () => {
+  workspaceThemeMock.useWorkspaceTheme.mockReturnValue({
+    theme: "light",
+    isPending: false,
+    scope: "household",
+  })
 
   render(
+    <ThemeProvider>
+      <p>Theme shell</p>
+    </ThemeProvider>,
+  )
+
+  expect(themeProviderMock.setTheme).toHaveBeenCalledWith("light")
+})
+
+test("does not touch the applied theme while the workspace theme is still loading", () => {
+  workspaceThemeMock.useWorkspaceTheme.mockReturnValue({
+    theme: "dark",
+    isPending: true,
+    scope: "personal",
+  })
+
+  render(
+    <ThemeProvider>
+      <p>Theme shell</p>
+    </ThemeProvider>,
+  )
+
+  expect(themeProviderMock.setTheme).not.toHaveBeenCalled()
+})
+
+test("re-syncs when the resolved theme changes after a workspace switch", () => {
+  const { rerender } = render(
     <ThemeProvider>
       <p>Theme shell</p>
     </ThemeProvider>,
@@ -64,57 +93,17 @@ test("applies the active workspace's saved theme when switching workspaces", () 
   themeProviderMock.setTheme.mockClear()
 
   act(() => {
-    useWorkspaceStore.getState().setActiveWorkspace({ id: "house-1" })
+    workspaceThemeMock.useWorkspaceTheme.mockReturnValue({
+      theme: "light",
+      isPending: false,
+      scope: "household",
+    })
+    rerender(
+      <ThemeProvider>
+        <p>Theme shell</p>
+      </ThemeProvider>,
+    )
   })
 
   expect(themeProviderMock.setTheme).toHaveBeenCalledWith("light")
-})
-
-test("falls back to the default theme for a workspace with no saved preference", () => {
-  render(
-    <ThemeProvider>
-      <p>Theme shell</p>
-    </ThemeProvider>,
-  )
-  themeProviderMock.setTheme.mockClear()
-
-  act(() => {
-    useWorkspaceStore.getState().setActiveWorkspace({ id: "house-2" })
-  })
-
-  expect(themeProviderMock.setTheme).toHaveBeenCalledWith("dark")
-})
-
-test("persists the hotkey toggle under the active workspace", () => {
-  useWorkspaceStore.setState({
-    activeWorkspaceId: "house-1",
-    activeWorkspaceScope: "household",
-  })
-
-  render(
-    <ThemeProvider>
-      <p>Theme shell</p>
-    </ThemeProvider>,
-  )
-
-  window.dispatchEvent(new KeyboardEvent("keydown", { key: "d" }))
-
-  expect(themeProviderMock.setTheme).toHaveBeenCalledWith("light")
-  expect(JSON.parse(localStorage.getItem("workspace-themes") ?? "{}")).toMatchObject({
-    "household:house-1": "light",
-  })
-})
-
-test("keeps the hotkey toggle scoped to personal when no household is active", () => {
-  render(
-    <ThemeProvider>
-      <p>Theme shell</p>
-    </ThemeProvider>,
-  )
-
-  window.dispatchEvent(new KeyboardEvent("keydown", { key: "d" }))
-
-  expect(JSON.parse(localStorage.getItem("workspace-themes") ?? "{}")).toMatchObject({
-    personal: "light",
-  })
 })
