@@ -391,34 +391,6 @@ def _owned_expenses_for_year(db: Session, user_id: str, year: int) -> list[Expen
     )
 
 
-def _parse_amount(value: Any) -> tuple[Decimal | None, str | None]:
-    if value is None or (isinstance(value, str) and not value.strip()):
-        return None, "Amount is required."
-    try:
-        if isinstance(value, Decimal):
-            amount = value
-        elif isinstance(value, int | float):
-            amount = Decimal(str(value))
-        else:
-            amount = Decimal(str(value).strip())
-    except InvalidOperation:
-        return None, "Amount must be a valid number."
-    try:
-        return _validate_amount(amount), None
-    except ValueError as exc:
-        return None, str(exc)
-
-
-def _parse_currency(value: Any) -> tuple[str | None, str | None]:
-    text = _clean_str(value)
-    if not text:
-        return None, "Currency is required."
-    try:
-        return _validate_currency(text), None
-    except ValueError as exc:
-        return None, str(exc)
-
-
 _AMOUNT_QUANT = Decimal("0.01")
 
 
@@ -436,7 +408,7 @@ def _parse_finite_decimal(value: Any) -> Decimal | None:
 
     `Decimal("nan")` and `Decimal("inf")` parse without raising
     `InvalidOperation`, but NaN raises on comparison (e.g. `<= 0`) and
-    Infinity raises on `quantize()` -- both would otherwise slip past the
+    Infinity raises on `quantize()` -- both would otherwise slip past a
     parse step's `except InvalidOperation` and surface as an unhandled 500
     instead of a validation error.
     """
@@ -444,6 +416,29 @@ def _parse_finite_decimal(value: Any) -> Decimal | None:
     if not parsed.is_finite():
         raise InvalidOperation("value must be finite")
     return parsed
+
+
+def _parse_amount(value: Any) -> tuple[Decimal | None, str | None]:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None, "Amount is required."
+    try:
+        amount = _parse_finite_decimal(value)
+    except InvalidOperation:
+        return None, "Amount must be a valid number."
+    try:
+        return _validate_amount(amount), None
+    except ValueError as exc:
+        return None, str(exc)
+
+
+def _parse_currency(value: Any) -> tuple[str | None, str | None]:
+    text = _clean_str(value)
+    if not text:
+        return None, "Currency is required."
+    try:
+        return _validate_currency(text), None
+    except ValueError as exc:
+        return None, str(exc)
 
 
 def _parse_base_amount(value: Any) -> tuple[Decimal | None, str | None]:

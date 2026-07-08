@@ -495,6 +495,22 @@ def test_build_import_plan_rejects_invalid_amount() -> None:
     assert "Amount must be a valid number." in errors[0]["messages"]
 
 
+@pytest.mark.parametrize("non_finite", ["nan", "inf", "-inf"])
+def test_build_import_plan_rejects_non_finite_amount(non_finite: str) -> None:
+    """Decimal("nan") parses without raising InvalidOperation but raises on
+    the "<= 0" comparison inside _validate_amount -- must surface as a row
+    validation error, not an unhandled 500."""
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    _, _, _, errors = build_import_plan(
+        db, "user-1", [_row(**{"Amount": non_finite})], 2026
+    )
+
+    assert len(errors) == 1
+    assert "Amount must be a valid number." in errors[0]["messages"]
+
+
 def test_build_import_plan_rejects_non_positive_amount() -> None:
     db = _mock_db()
     _queue_db(db, [("Food", "cat-1")], [])
