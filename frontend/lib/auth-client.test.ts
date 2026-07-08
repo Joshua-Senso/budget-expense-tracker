@@ -14,6 +14,7 @@ vi.mock("better-auth/react", () => ({
 vi.mock("better-auth/client/plugins", () => ({
   jwtClient: () => ({}),
   organizationClient: () => ({}),
+  inferAdditionalFields: () => ({}),
 }))
 
 function makeJwt(expiresAt: number) {
