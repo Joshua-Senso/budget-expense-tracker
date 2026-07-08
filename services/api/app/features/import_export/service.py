@@ -18,7 +18,11 @@ from app.features.currency.service import (
 )
 from app.features.exchange_rates.service import resolve_exchange_rate
 from app.features.expenses.models import Expense
-from app.features.expenses.schemas import _validate_amount, _validate_currency
+from app.features.expenses.schemas import (
+    _MAX_AMOUNT,
+    _validate_amount,
+    _validate_currency,
+)
 from app.features.import_export.schemas import ImportSummary
 from app.features.recurring.service import project_month
 
@@ -441,11 +445,20 @@ def _parse_currency(value: Any) -> tuple[str | None, str | None]:
         return None, str(exc)
 
 
+_EXCHANGE_RATE_QUANT = Decimal("0.000001")
+# Expense.exchange_rate is Numeric(18, 6) -- 12 digits before the point.
+_MAX_EXCHANGE_RATE = Decimal("999999999999.999999")
+
+
 def _parse_base_amount(value: Any) -> tuple[Decimal | None, str | None]:
     """Optional -- a blank cell means "let the system compute it" (see
-    apply_import_plan). A non-blank cell must be a valid positive amount;
-    whether it's *consistent* with Amount x Exchange Rate is checked by the
-    caller once all three fields are parsed."""
+    apply_import_plan). A non-blank cell must be a valid positive amount
+    that fits Expense.base_amount (Numeric(12, 2), same limit as Amount) --
+    otherwise a value that passes this and the Amount x Exchange Rate
+    consistency check would still blow up at DB commit as a numeric
+    overflow instead of an ImportValidationError. Whether it's *consistent*
+    with Amount x Exchange Rate is checked by the caller once all three
+    fields are parsed."""
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, None
     try:
@@ -454,11 +467,19 @@ def _parse_base_amount(value: Any) -> tuple[Decimal | None, str | None]:
         return None, "Base Amount must be a valid number."
     if amount <= 0:
         return None, "Base Amount must be positive."
-    return amount.quantize(_AMOUNT_QUANT, rounding=ROUND_HALF_UP), None
+    try:
+        quantized = amount.quantize(_AMOUNT_QUANT, rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return None, "Base Amount exceeds maximum allowed value."
+    if quantized > _MAX_AMOUNT:
+        return None, "Base Amount exceeds maximum allowed value."
+    return quantized, None
 
 
 def _parse_exchange_rate(value: Any) -> tuple[Decimal | None, str | None]:
-    """Optional, same blank-means-compute convention as Base Amount."""
+    """Optional, same blank-means-compute convention as Base Amount. Also
+    quantized/capped to fit Expense.exchange_rate (Numeric(18, 6)) for the
+    same reason -- a validated plan must never fail at DB commit."""
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, None
     try:
@@ -467,7 +488,13 @@ def _parse_exchange_rate(value: Any) -> tuple[Decimal | None, str | None]:
         return None, "Exchange Rate must be a valid number."
     if rate <= 0:
         return None, "Exchange Rate must be positive."
-    return rate, None
+    try:
+        quantized = rate.quantize(_EXCHANGE_RATE_QUANT, rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return None, "Exchange Rate exceeds maximum allowed value."
+    if quantized > _MAX_EXCHANGE_RATE:
+        return None, "Exchange Rate exceeds maximum allowed value."
+    return quantized, None
 
 
 def _parse_spent_on(value: Any) -> tuple[date | None, str | None]:

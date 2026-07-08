@@ -633,6 +633,32 @@ def test_build_import_plan_rejects_zero_or_negative_exchange_rate() -> None:
     assert "Exchange Rate must be positive." in errors[0]["messages"]
 
 
+def test_build_import_plan_rejects_oversized_base_amount() -> None:
+    """A finite value above Expense.base_amount's Numeric(12, 2) limit must
+    fail row validation, not DB commit as a numeric overflow."""
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "10000000000.00", "Exchange Rate": "1"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Base Amount exceeds maximum allowed value." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_oversized_exchange_rate() -> None:
+    """A finite value above Expense.exchange_rate's Numeric(18, 6) limit
+    must fail row validation, not DB commit as a numeric overflow."""
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "150.00", "Exchange Rate": "1000000000000"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Exchange Rate exceeds maximum allowed value." in errors[0]["messages"]
+
+
 def test_build_import_plan_rejects_base_amount_without_exchange_rate() -> None:
     db = _mock_db()
     _queue_db(db, [("Food", "cat-1")], [])
