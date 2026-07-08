@@ -569,6 +569,32 @@ def test_build_import_plan_rejects_malformed_exchange_rate() -> None:
     assert "Exchange Rate must be a valid number." in errors[0]["messages"]
 
 
+@pytest.mark.parametrize("non_finite", ["nan", "inf", "-inf"])
+def test_build_import_plan_rejects_non_finite_base_amount(non_finite: str) -> None:
+    """NaN/Infinity parse as valid Decimals but raise on comparison/quantize
+    -- must surface as a row validation error, not an unhandled 500."""
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": non_finite, "Exchange Rate": "58.00"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Base Amount must be a valid number." in errors[0]["messages"]
+
+
+@pytest.mark.parametrize("non_finite", ["nan", "inf", "-inf"])
+def test_build_import_plan_rejects_non_finite_exchange_rate(non_finite: str) -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "1160.00", "Exchange Rate": non_finite})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Exchange Rate must be a valid number." in errors[0]["messages"]
+
+
 def test_build_import_plan_rejects_zero_or_negative_base_amount() -> None:
     db = _mock_db()
     _queue_db(db, [("Food", "cat-1")], [])

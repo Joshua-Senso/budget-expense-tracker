@@ -431,6 +431,21 @@ def _parse_decimal(value: Any) -> Decimal | None:
     return Decimal(str(value).strip())
 
 
+def _parse_finite_decimal(value: Any) -> Decimal | None:
+    """Like `_parse_decimal`, but also rejects NaN/Infinity.
+
+    `Decimal("nan")` and `Decimal("inf")` parse without raising
+    `InvalidOperation`, but NaN raises on comparison (e.g. `<= 0`) and
+    Infinity raises on `quantize()` -- both would otherwise slip past the
+    parse step's `except InvalidOperation` and surface as an unhandled 500
+    instead of a validation error.
+    """
+    parsed = _parse_decimal(value)
+    if not parsed.is_finite():
+        raise InvalidOperation("value must be finite")
+    return parsed
+
+
 def _parse_base_amount(value: Any) -> tuple[Decimal | None, str | None]:
     """Optional -- a blank cell means "let the system compute it" (see
     apply_import_plan). A non-blank cell must be a valid positive amount;
@@ -439,7 +454,7 @@ def _parse_base_amount(value: Any) -> tuple[Decimal | None, str | None]:
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, None
     try:
-        amount = _parse_decimal(value)
+        amount = _parse_finite_decimal(value)
     except InvalidOperation:
         return None, "Base Amount must be a valid number."
     if amount <= 0:
@@ -452,7 +467,7 @@ def _parse_exchange_rate(value: Any) -> tuple[Decimal | None, str | None]:
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, None
     try:
-        rate = _parse_decimal(value)
+        rate = _parse_finite_decimal(value)
     except InvalidOperation:
         return None, "Exchange Rate must be a valid number."
     if rate <= 0:
