@@ -43,6 +43,8 @@ def _make_expense(**kwargs) -> Expense:
         "original_description": None,
         "recurring_expense_id": None,
         "household_id": None,
+        "base_amount": Decimal("150.00"),
+        "exchange_rate": Decimal("1"),
     }
     exp = MagicMock(spec=Expense)
     for k, v in {**defaults, **kwargs}.items():
@@ -198,6 +200,23 @@ def test_build_export_workbook_writes_header_and_rows() -> None:
     assert data_row[3] == "Lunch"
     assert data_row[4] == "150.00"
     assert data_row[5] == "PHP"
+    assert data_row[EXPORT_COLUMNS.index("Base Amount")] == "150.00"
+    assert data_row[EXPORT_COLUMNS.index("Exchange Rate")] == "1"
+
+
+def test_build_export_workbook_leaves_conversion_blank_for_projected_rows() -> None:
+    db = _mock_db()
+    rule = _make_rule(start_on=date(2026, 1, 15))
+    future_month_results = [[rule]] + [[] for _ in range(10)]
+    _queue_db(db, [("cat-1", "Subscriptions")], [], *future_month_results)
+
+    buffer = build_export_workbook(db, "user-1", 2026, today=date(2026, 1, 10))
+
+    workbook = load_workbook(buffer)
+    sheet = workbook["Expenses"]
+    data_row = [cell.value for cell in sheet[2]]
+    assert data_row[EXPORT_COLUMNS.index("Base Amount")] is None
+    assert data_row[EXPORT_COLUMNS.index("Exchange Rate")] is None
 
 
 def test_build_export_workbook_preserves_exact_decimal_amount() -> None:
@@ -349,6 +368,8 @@ def _row(row_number: int = 2, **overrides) -> dict:
         "Installment Index": None,
         "Installment Total": None,
         "Original Description": None,
+        "Base Amount": None,
+        "Exchange Rate": None,
         "_row_number": row_number,
     }
     defaults.update(overrides)
@@ -474,6 +495,22 @@ def test_build_import_plan_rejects_invalid_amount() -> None:
     assert "Amount must be a valid number." in errors[0]["messages"]
 
 
+@pytest.mark.parametrize("non_finite", ["nan", "inf", "-inf"])
+def test_build_import_plan_rejects_non_finite_amount(non_finite: str) -> None:
+    """Decimal("nan") parses without raising InvalidOperation but raises on
+    the "<= 0" comparison inside _validate_amount -- must surface as a row
+    validation error, not an unhandled 500."""
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    _, _, _, errors = build_import_plan(
+        db, "user-1", [_row(**{"Amount": non_finite})], 2026
+    )
+
+    assert len(errors) == 1
+    assert "Amount must be a valid number." in errors[0]["messages"]
+
+
 def test_build_import_plan_rejects_non_positive_amount() -> None:
     db = _mock_db()
     _queue_db(db, [("Food", "cat-1")], [])
@@ -494,6 +531,164 @@ def test_build_import_plan_rejects_invalid_currency() -> None:
 
     assert len(errors) == 1
     assert "currency must be one of" in errors[0]["messages"][0]
+
+
+def test_build_import_plan_accepts_row_with_no_conversion_columns() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    inserts, _, _, errors = build_import_plan(db, "user-1", [_row()], 2026)
+
+    assert errors == []
+    assert inserts[0].base_amount is None
+    assert inserts[0].exchange_rate is None
+
+
+def test_build_import_plan_accepts_consistent_conversion_columns() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(
+        **{
+            "Amount": "20.00",
+            "Currency": "USD",
+            "Base Amount": "1160.00",
+            "Exchange Rate": "58.00",
+        }
+    )
+    inserts, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert errors == []
+    assert inserts[0].base_amount == Decimal("1160.00")
+    assert inserts[0].exchange_rate == Decimal("58.00")
+
+
+def test_build_import_plan_rejects_malformed_base_amount() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "not-a-number", "Exchange Rate": "58.00"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Base Amount must be a valid number." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_malformed_exchange_rate() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "1160.00", "Exchange Rate": "not-a-number"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Exchange Rate must be a valid number." in errors[0]["messages"]
+
+
+@pytest.mark.parametrize("non_finite", ["nan", "inf", "-inf"])
+def test_build_import_plan_rejects_non_finite_base_amount(non_finite: str) -> None:
+    """NaN/Infinity parse as valid Decimals but raise on comparison/quantize
+    -- must surface as a row validation error, not an unhandled 500."""
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": non_finite, "Exchange Rate": "58.00"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Base Amount must be a valid number." in errors[0]["messages"]
+
+
+@pytest.mark.parametrize("non_finite", ["nan", "inf", "-inf"])
+def test_build_import_plan_rejects_non_finite_exchange_rate(non_finite: str) -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "1160.00", "Exchange Rate": non_finite})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Exchange Rate must be a valid number." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_zero_or_negative_base_amount() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "0", "Exchange Rate": "1"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Base Amount must be positive." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_zero_or_negative_exchange_rate() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "150.00", "Exchange Rate": "-1"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Exchange Rate must be positive." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_oversized_base_amount() -> None:
+    """A finite value above Expense.base_amount's Numeric(12, 2) limit must
+    fail row validation, not DB commit as a numeric overflow."""
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "10000000000.00", "Exchange Rate": "1"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Base Amount exceeds maximum allowed value." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_oversized_exchange_rate() -> None:
+    """A finite value above Expense.exchange_rate's Numeric(18, 6) limit
+    must fail row validation, not DB commit as a numeric overflow."""
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "150.00", "Exchange Rate": "1000000000000"})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Exchange Rate exceeds maximum allowed value." in errors[0]["messages"]
+
+
+def test_build_import_plan_rejects_base_amount_without_exchange_rate() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(**{"Base Amount": "150.00", "Exchange Rate": None})
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert (
+        "Base Amount and Exchange Rate must both be provided, or both left blank."
+        in errors[0]["messages"]
+    )
+
+
+def test_build_import_plan_rejects_inconsistent_base_amount() -> None:
+    db = _mock_db()
+    _queue_db(db, [("Food", "cat-1")], [])
+
+    row = _row(
+        **{
+            "Amount": "20.00",
+            "Currency": "USD",
+            "Base Amount": "1000.00",
+            "Exchange Rate": "58.00",
+        }
+    )
+    _, _, _, errors = build_import_plan(db, "user-1", [row], 2026)
+
+    assert len(errors) == 1
+    assert "Base Amount does not match Amount x Exchange Rate." in errors[0]["messages"]
 
 
 def test_build_import_plan_rejects_invalid_date() -> None:
@@ -679,12 +874,143 @@ def test_apply_import_plan_inserts_updates_and_deletes() -> None:
     assert expense.amount == Decimal("20.00")
     assert expense.currency == "USD"
     assert expense.spent_on == date(2026, 2, 1)
-    # USD != the resolved base currency (PHP) and import has no interactive
-    # moment to supply a rate, so it falls back to unconverted (BUD-54 will
-    # address faithful cross-currency import conversion).
+    # currency changed (PHP -> USD), so conversion is recomputed; USD != the
+    # resolved base currency (PHP) and import has no interactive moment to
+    # supply a rate, so it falls back to unconverted.
     assert expense.base_amount == Decimal("20.00")
     assert expense.exchange_rate == Decimal("1")
     db.commit.assert_called_once()
+
+
+def test_apply_import_plan_honors_sheet_supplied_conversion_on_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A row whose sheet carries a validated Base Amount + Exchange Rate
+    (as build_import_plan would parse from a plain export -> re-import) must
+    round-trip that conversion exactly, not re-derive it against whatever
+    base currency/manual rate happens to resolve today (BUD-54)."""
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError(
+            "conversion should not be recomputed when the sheet supplies it"
+        )
+
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_base_currency", _fail_if_called
+    )
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_exchange_rate", _fail_if_called
+    )
+    db = _mock_db()
+    expense = _make_expense(
+        id="exp-1",
+        category_id="cat-1",
+        description="Old",
+        amount=Decimal("20.00"),
+        currency="USD",
+        spent_on=date(2026, 2, 1),
+        base_amount=Decimal("999.00"),
+        exchange_rate=Decimal("99.00"),
+    )
+    _queue_db(db, [])
+
+    updates = [
+        _UpdatePlan(
+            expense,
+            "cat-2",
+            "Updated",
+            Decimal("20.00"),
+            "USD",
+            date(2026, 2, 1),
+            Decimal("1160.00"),
+            Decimal("58.00"),
+        )
+    ]
+
+    apply_import_plan(db, "user-1", [], updates, set())
+
+    assert expense.description == "Updated"
+    assert expense.base_amount == Decimal("1160.00")
+    assert expense.exchange_rate == Decimal("58.00")
+
+
+def test_apply_import_plan_recomputes_conversion_when_sheet_omits_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_base_currency",
+        lambda *args, **kwargs: "PHP",
+    )
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_exchange_rate",
+        lambda db, user_id, household_id, currency, base_currency, exchange_rate: (
+            exchange_rate
+        ),
+    )
+    db = _mock_db()
+    expense = _make_expense(
+        id="exp-1",
+        category_id="cat-1",
+        amount=Decimal("150.00"),
+        currency="PHP",
+        spent_on=date(2026, 1, 5),
+        base_amount=Decimal("150.00"),
+        exchange_rate=Decimal("1"),
+    )
+    _queue_db(db, [])
+
+    updates = [
+        _UpdatePlan(
+            expense, "cat-1", "Lunch", Decimal("200.00"), "PHP", date(2026, 1, 5)
+        )
+    ]
+
+    apply_import_plan(db, "user-1", [], updates, set())
+
+    assert expense.base_amount == Decimal("200.00")
+    assert expense.exchange_rate == Decimal("1")
+
+
+def test_apply_import_plan_honors_sheet_supplied_conversion_on_insert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The second BUD-54 review finding: a blank-Row-ID insert (e.g. a full
+    restore where Row IDs were stripped) must also preserve an exported
+    cross-currency conversion instead of recomputing it -- otherwise an
+    exported USD row (Base Amount 1160.00, Exchange Rate 58.00) would import
+    unconverted if no manual rate currently resolves for the pair."""
+
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError(
+            "conversion should not be recomputed when the sheet supplies it"
+        )
+
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_base_currency", _fail_if_called
+    )
+    monkeypatch.setattr(
+        "app.features.import_export.service.resolve_exchange_rate", _fail_if_called
+    )
+    db = _mock_db()
+
+    inserts = [
+        _InsertPlan(
+            "cat-1",
+            "New expense",
+            Decimal("20.00"),
+            "USD",
+            date(2026, 1, 1),
+            Decimal("1160.00"),
+            Decimal("58.00"),
+        )
+    ]
+
+    summary = apply_import_plan(db, "user-1", inserts, [], set())
+
+    assert summary.inserted == 1
+    added_expense = db.add.call_args[0][0]
+    assert added_expense.base_amount == Decimal("1160.00")
+    assert added_expense.exchange_rate == Decimal("58.00")
 
 
 def test_apply_import_plan_uses_stored_manual_rate_for_cross_currency_row(

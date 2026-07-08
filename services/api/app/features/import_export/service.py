@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from io import BytesIO
 from typing import Any
 
@@ -18,7 +18,11 @@ from app.features.currency.service import (
 )
 from app.features.exchange_rates.service import resolve_exchange_rate
 from app.features.expenses.models import Expense
-from app.features.expenses.schemas import _validate_amount, _validate_currency
+from app.features.expenses.schemas import (
+    _MAX_AMOUNT,
+    _validate_amount,
+    _validate_currency,
+)
 from app.features.import_export.schemas import ImportSummary
 from app.features.recurring.service import project_month
 
@@ -36,6 +40,8 @@ EXPORT_COLUMNS = [
     "Installment Index",
     "Installment Total",
     "Original Description",
+    "Base Amount",
+    "Exchange Rate",
 ]
 
 EXPORT_MIME_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -83,6 +89,8 @@ def _recorded_rows(
             "installment_index": expense.installment_index,
             "installment_total": expense.installment_total,
             "original_description": expense.original_description,
+            "base_amount": expense.base_amount,
+            "exchange_rate": expense.exchange_rate,
         }
         for expense in db.execute(query).scalars().all()
     ]
@@ -122,6 +130,12 @@ def _projected_rows(
                     "installment_index": None,
                     "installment_total": None,
                     "original_description": None,
+                    # A projected row is a preview, never persisted, so there's
+                    # no stored conversion to show -- left blank rather than
+                    # computed, since import always ignores "projected" rows
+                    # anyway (see build_import_plan).
+                    "base_amount": None,
+                    "exchange_rate": None,
                 }
             )
     return rows
@@ -163,6 +177,8 @@ def build_export_workbook(
                 row["installment_index"],
                 row["installment_total"],
                 row["original_description"],
+                str(row["base_amount"]) if row["base_amount"] is not None else None,
+                str(row["exchange_rate"]) if row["exchange_rate"] is not None else None,
             ]
         )
 
@@ -219,6 +235,11 @@ class _InsertPlan:
     amount: Decimal
     currency: str
     spent_on: date
+    # Sheet-supplied conversion, already validated against `amount` -- None
+    # for either means the sheet left both blank, so apply_import_plan
+    # computes them instead (see _convert_for_import).
+    base_amount: Decimal | None = None
+    exchange_rate: Decimal | None = None
 
 
 @dataclass
@@ -229,6 +250,8 @@ class _UpdatePlan:
     amount: Decimal
     currency: str
     spent_on: date
+    base_amount: Decimal | None = None
+    exchange_rate: Decimal | None = None
 
 
 def _clean_str(value: Any) -> str:
@@ -372,16 +395,38 @@ def _owned_expenses_for_year(db: Session, user_id: str, year: int) -> list[Expen
     )
 
 
+_AMOUNT_QUANT = Decimal("0.01")
+
+
+def _parse_decimal(value: Any) -> Decimal | None:
+    """Raises InvalidOperation for a value that can't be read as a number."""
+    if isinstance(value, Decimal):
+        return value
+    if isinstance(value, int | float):
+        return Decimal(str(value))
+    return Decimal(str(value).strip())
+
+
+def _parse_finite_decimal(value: Any) -> Decimal | None:
+    """Like `_parse_decimal`, but also rejects NaN/Infinity.
+
+    `Decimal("nan")` and `Decimal("inf")` parse without raising
+    `InvalidOperation`, but NaN raises on comparison (e.g. `<= 0`) and
+    Infinity raises on `quantize()` -- both would otherwise slip past a
+    parse step's `except InvalidOperation` and surface as an unhandled 500
+    instead of a validation error.
+    """
+    parsed = _parse_decimal(value)
+    if not parsed.is_finite():
+        raise InvalidOperation("value must be finite")
+    return parsed
+
+
 def _parse_amount(value: Any) -> tuple[Decimal | None, str | None]:
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, "Amount is required."
     try:
-        if isinstance(value, Decimal):
-            amount = value
-        elif isinstance(value, int | float):
-            amount = Decimal(str(value))
-        else:
-            amount = Decimal(str(value).strip())
+        amount = _parse_finite_decimal(value)
     except InvalidOperation:
         return None, "Amount must be a valid number."
     try:
@@ -398,6 +443,58 @@ def _parse_currency(value: Any) -> tuple[str | None, str | None]:
         return _validate_currency(text), None
     except ValueError as exc:
         return None, str(exc)
+
+
+_EXCHANGE_RATE_QUANT = Decimal("0.000001")
+# Expense.exchange_rate is Numeric(18, 6) -- 12 digits before the point.
+_MAX_EXCHANGE_RATE = Decimal("999999999999.999999")
+
+
+def _parse_base_amount(value: Any) -> tuple[Decimal | None, str | None]:
+    """Optional -- a blank cell means "let the system compute it" (see
+    apply_import_plan). A non-blank cell must be a valid positive amount
+    that fits Expense.base_amount (Numeric(12, 2), same limit as Amount) --
+    otherwise a value that passes this and the Amount x Exchange Rate
+    consistency check would still blow up at DB commit as a numeric
+    overflow instead of an ImportValidationError. Whether it's *consistent*
+    with Amount x Exchange Rate is checked by the caller once all three
+    fields are parsed."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None, None
+    try:
+        amount = _parse_finite_decimal(value)
+    except InvalidOperation:
+        return None, "Base Amount must be a valid number."
+    if amount <= 0:
+        return None, "Base Amount must be positive."
+    try:
+        quantized = amount.quantize(_AMOUNT_QUANT, rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return None, "Base Amount exceeds maximum allowed value."
+    if quantized > _MAX_AMOUNT:
+        return None, "Base Amount exceeds maximum allowed value."
+    return quantized, None
+
+
+def _parse_exchange_rate(value: Any) -> tuple[Decimal | None, str | None]:
+    """Optional, same blank-means-compute convention as Base Amount. Also
+    quantized/capped to fit Expense.exchange_rate (Numeric(18, 6)) for the
+    same reason -- a validated plan must never fail at DB commit."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None, None
+    try:
+        rate = _parse_finite_decimal(value)
+    except InvalidOperation:
+        return None, "Exchange Rate must be a valid number."
+    if rate <= 0:
+        return None, "Exchange Rate must be positive."
+    try:
+        quantized = rate.quantize(_EXCHANGE_RATE_QUANT, rounding=ROUND_HALF_UP)
+    except InvalidOperation:
+        return None, "Exchange Rate exceeds maximum allowed value."
+    if quantized > _MAX_EXCHANGE_RATE:
+        return None, "Exchange Rate exceeds maximum allowed value."
+    return quantized, None
 
 
 def _parse_spent_on(value: Any) -> tuple[date | None, str | None]:
@@ -470,6 +567,31 @@ def build_import_plan(
         elif spent_on.year != year:
             messages.append(f"Date must be in {year}.")
 
+        base_amount, base_amount_error = _parse_base_amount(row.get("Base Amount"))
+        if base_amount_error:
+            messages.append(base_amount_error)
+
+        exchange_rate, exchange_rate_error = _parse_exchange_rate(
+            row.get("Exchange Rate")
+        )
+        if exchange_rate_error:
+            messages.append(exchange_rate_error)
+
+        if not base_amount_error and not exchange_rate_error:
+            if (base_amount is None) != (exchange_rate is None):
+                messages.append(
+                    "Base Amount and Exchange Rate must both be provided, or "
+                    "both left blank."
+                )
+            elif amount is not None and base_amount is not None:
+                expected_base_amount = (amount * exchange_rate).quantize(
+                    _AMOUNT_QUANT, rounding=ROUND_HALF_UP
+                )
+                if base_amount != expected_base_amount:
+                    messages.append(
+                        "Base Amount does not match Amount x Exchange Rate."
+                    )
+
         category_name = _clean_str(row.get("Category"))
         category_id = categories.get(category_name) if category_name else None
         if not category_name:
@@ -487,7 +609,15 @@ def build_import_plan(
                 errors.append({"row": row_number, "messages": messages})
                 continue
             inserts.append(
-                _InsertPlan(category_id, description, amount, currency, spent_on)
+                _InsertPlan(
+                    category_id,
+                    description,
+                    amount,
+                    currency,
+                    spent_on,
+                    base_amount,
+                    exchange_rate,
+                )
             )
             continue
 
@@ -515,7 +645,16 @@ def build_import_plan(
 
         seen_ids.add(row_id)
         updates.append(
-            _UpdatePlan(existing, category_id, description, amount, currency, spent_on)
+            _UpdatePlan(
+                existing,
+                category_id,
+                description,
+                amount,
+                currency,
+                spent_on,
+                base_amount,
+                exchange_rate,
+            )
         )
 
     delete_ids = universe_ids - seen_ids
@@ -529,8 +668,12 @@ def _convert_for_import(
     capture a rate per row (unlike the create/update endpoints). Falls back
     to a manually maintained rate for the pair (BUD-52), then to recording
     the row unconverted rather than failing the whole import when a rate
-    would be required. Preserving currency/conversion faithfully through
-    import is BUD-54's job.
+    would be required.
+
+    Only called when a row's sheet doesn't supply a validated Base Amount +
+    Exchange Rate pair (see `apply_import_plan`, which otherwise trusts
+    those sheet values directly) -- i.e. a genuinely new row a user typed by
+    hand, or a legacy sheet exported before these columns existed.
     """
     base_currency = resolve_base_currency(
         db, user_id, month_key_for(spent_on), household_id=None
@@ -565,14 +708,28 @@ def apply_import_plan(
         update.expense.amount = update.amount
         update.expense.currency = update.currency
         update.expense.spent_on = update.spent_on
-        update.expense.base_amount, update.expense.exchange_rate = _convert_for_import(
-            db, user_id, update.amount, update.currency, update.spent_on
-        )
+        # A validated Base Amount + Exchange Rate on the sheet (already
+        # checked consistent with Amount, in build_import_plan) is trusted
+        # as-is -- this is what makes a plain export -> re-import round-trip
+        # exactly, rather than re-deriving the conversion against whatever
+        # base currency/manual rate happens to resolve today.
+        if update.base_amount is not None and update.exchange_rate is not None:
+            update.expense.base_amount = update.base_amount
+            update.expense.exchange_rate = update.exchange_rate
+        else:
+            update.expense.base_amount, update.expense.exchange_rate = (
+                _convert_for_import(
+                    db, user_id, update.amount, update.currency, update.spent_on
+                )
+            )
 
     for insert in inserts:
-        base_amount, exchange_rate = _convert_for_import(
-            db, user_id, insert.amount, insert.currency, insert.spent_on
-        )
+        if insert.base_amount is not None and insert.exchange_rate is not None:
+            base_amount, exchange_rate = insert.base_amount, insert.exchange_rate
+        else:
+            base_amount, exchange_rate = _convert_for_import(
+                db, user_id, insert.amount, insert.currency, insert.spent_on
+            )
         db.add(
             Expense(
                 user_id=user_id,
