@@ -4,9 +4,18 @@ import { useState } from "react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { ApiError } from "@/lib/api-client"
 
 import { useHouseholdInvitations } from "../api/queries"
 import { useCancelInvitation } from "../api/mutations"
+
+function getCancelErrorMessage(err: unknown) {
+  if (err instanceof ApiError && err.status === 404) {
+    return "This invitation no longer exists. Refresh the page and try again."
+  }
+
+  return "Could not cancel invitation. Please try again."
+}
 
 function InvitationsList({ householdId }: { householdId: string }) {
   const { data, isLoading, isError } = useHouseholdInvitations(householdId)
@@ -21,8 +30,8 @@ function InvitationsList({ householdId }: { householdId: string }) {
     setPendingId(invitationId)
     try {
       await cancelInvitation.mutateAsync(invitationId)
-    } catch {
-      setError("Could not cancel invitation. Please try again.")
+    } catch (err) {
+      setError(getCancelErrorMessage(err))
     } finally {
       setPendingId(null)
     }

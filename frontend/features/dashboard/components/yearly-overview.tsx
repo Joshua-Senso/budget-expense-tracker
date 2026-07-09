@@ -4,6 +4,7 @@ import { useState } from "react"
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { EmptyState } from "@/components/shared/empty-state"
 import { formatCurrency, formatMonthName } from "@/lib/format"
 import { useYearStore } from "@/stores/year-store"
 
@@ -115,24 +116,30 @@ function YearlyOverview() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        {currentWindow.map((month) => (
-          <MonthTile
-            key={month.month_key}
-            month={month}
-            baseCurrency={overview.base_currency}
-          />
-        ))}
-      </div>
+      {Number(overview.year_total) === 0 ? (
+        <EmptyState message={`No expenses recorded for ${year} yet.`} />
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-3">
+            {currentWindow.map((month) => (
+              <MonthTile
+                key={month.month_key}
+                month={month}
+                baseCurrency={overview.base_currency}
+              />
+            ))}
+          </div>
 
-      <div className="flex items-center justify-between rounded-3xl border bg-card p-5 shadow-sm">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase">
-          Year total
-        </h3>
-        <span className="text-xl font-semibold">
-          {formatCurrency(overview.year_total, overview.base_currency)}
-        </span>
-      </div>
+          <div className="flex items-center justify-between rounded-3xl border bg-card p-5 shadow-sm">
+            <h3 className="text-sm font-medium text-muted-foreground uppercase">
+              Year total
+            </h3>
+            <span className="text-xl font-semibold">
+              {formatCurrency(overview.year_total, overview.base_currency)}
+            </span>
+          </div>
+        </>
+      )}
     </div>
   )
 }
