@@ -49,8 +49,12 @@ Dockerfile
 ## Rules
 
 - **Schema is CLI-managed.** Edit config in `auth.ts`, then
-  `bunx @better-auth/cli@latest generate` (writes `schema/`) and `… migrate`
-  (applies to Postgres). Never hand-edit `schema/`.
+  `bun run schema:generate` (writes `schema/`) and `bun run schema:migrate`
+  (applies to Postgres). Never hand-edit `schema/`. The CLI version is pinned
+  (`1.4.22`, both in `devDependencies` and in the scripts themselves) rather than
+  `@latest` — devDependencies are stripped from the production image, so the
+  scripts' own pin is what keeps a deploy-time `bunx` fetch reproducible
+  (BUD-72). Bump both together, deliberately.
 - **Plural tables.** `usePlural: true` is set in `auth.ts` — keep it. Flipping it
   later renames every table (a destructive migration).
 - **One database, shared with the API** (ARCHITECTURE §6). Two migration owners:
@@ -78,11 +82,11 @@ for the API** — coordinate both sides.
 ## Commands
 
 ```
-make auth                              # from repo root — run dev server (:4000)
-bun run dev                            # same, from services/auth
-bun test                               # tests
-bunx @better-auth/cli@latest generate  # regenerate schema/ after config changes
-bunx @better-auth/cli@latest migrate   # apply auth tables to Postgres (needs `make up`)
+make auth                # from repo root — run dev server (:4000)
+bun run dev              # same, from services/auth
+bun test                 # tests
+bun run schema:generate  # regenerate schema/ after config changes (pinned CLI version)
+bun run schema:migrate   # apply auth tables to Postgres (needs `make up`)
 ```
 
 Rule of thumb: **Makefile = run the service; bun / Better Auth CLI = auth-specific
