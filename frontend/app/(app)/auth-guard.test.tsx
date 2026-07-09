@@ -1,9 +1,11 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, expect, test, vi } from "vitest"
 
 const guardMocks = vi.hoisted(() => ({
   replace: vi.fn(),
   useSession: vi.fn(),
+  clearBearerToken: vi.fn(),
 }))
 
 vi.mock("next/navigation", () => ({
@@ -13,20 +15,30 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/auth-client", () => ({
   authClient: {
     useSession: guardMocks.useSession,
+    signOut: vi.fn(),
   },
+  clearBearerToken: guardMocks.clearBearerToken,
 }))
 
 import { AuthGuard } from "./auth-guard"
 
+function renderWithQueryClient(ui: React.ReactElement) {
+  const queryClient = new QueryClient()
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  )
+}
+
 beforeEach(() => {
   guardMocks.replace.mockReset()
   guardMocks.useSession.mockReset()
+  guardMocks.clearBearerToken.mockReset()
 })
 
 test("auth guard shows a loading state while the session is pending", () => {
   guardMocks.useSession.mockReturnValue({ data: null, isPending: true })
 
-  render(
+  renderWithQueryClient(
     <AuthGuard>
       <p>Dashboard</p>
     </AuthGuard>,
@@ -38,7 +50,7 @@ test("auth guard shows a loading state while the session is pending", () => {
 test("auth guard redirects unauthenticated users", async () => {
   guardMocks.useSession.mockReturnValue({ data: null, isPending: false })
 
-  render(
+  renderWithQueryClient(
     <AuthGuard>
       <p>Dashboard</p>
     </AuthGuard>,
@@ -56,7 +68,7 @@ test("auth guard renders authenticated children", () => {
     isPending: false,
   })
 
-  render(
+  renderWithQueryClient(
     <AuthGuard>
       <p>Dashboard</p>
     </AuthGuard>,
