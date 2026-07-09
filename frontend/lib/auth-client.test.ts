@@ -103,4 +103,33 @@ describe("getBearerToken", () => {
 
     expect(console.error).toHaveBeenCalledWith("auth: token request threw", error)
   })
+
+  test("clearBearerToken called while a fetch is in flight prevents that fetch from repopulating the cache", async () => {
+    let resolveFirstFetch!: (value: { data: { token: string }; error: null }) => void
+    const staleToken = makeJwt(Date.now() + 120_000)
+    const freshToken = makeJwt(Date.now() + 180_000)
+
+    betterAuthMocks.fetch.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstFetch = resolve
+        }),
+    )
+    betterAuthMocks.fetch.mockResolvedValueOnce({ data: { token: freshToken }, error: null })
+
+    const { clearBearerToken, getBearerToken } = await loadAuthClient()
+
+    const firstCall = getBearerToken()
+    // Sign-out happens while the first fetch is still in flight.
+    clearBearerToken()
+    resolveFirstFetch({ data: { token: staleToken }, error: null })
+
+    // The original caller still gets the token it asked for...
+    await expect(firstCall).resolves.toBe(staleToken)
+
+    // ...but the cache must not have been repopulated by it: this call
+    // issues a fresh request instead of reusing the stale (pre-clear) token.
+    await expect(getBearerToken()).resolves.toBe(freshToken)
+    expect(betterAuthMocks.fetch).toHaveBeenCalledTimes(2)
+  })
 })

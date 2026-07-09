@@ -2,8 +2,9 @@
 
 import { useEffect } from "react"
 import { useRouter } from "next/navigation"
+import { useQueryClient } from "@tanstack/react-query"
 
-import { authClient } from "@/lib/auth-client"
+import { authClient, clearBearerToken } from "@/lib/auth-client"
 import { useWorkspaceStore } from "@/stores/workspace-store"
 
 const IDLE_MS = 30 * 60 * 1000
@@ -14,6 +15,7 @@ const ACTIVITY_EVENTS = ["mousemove", "keydown", "click", "touchstart", "scroll"
 
 export function useIdleSignout({ enabled }: { enabled: boolean }) {
   const router = useRouter()
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     if (!enabled) return
@@ -28,6 +30,8 @@ export function useIdleSignout({ enabled }: { enabled: boolean }) {
       try {
         await authClient.signOut()
       } finally {
+        clearBearerToken()
+        queryClient.clear()
         useWorkspaceStore.getState().setActiveWorkspace({ id: null })
         router.replace("/sign-in")
       }
@@ -65,5 +69,5 @@ export function useIdleSignout({ enabled }: { enabled: boolean }) {
       window.removeEventListener("focus", checkIdle)
       ACTIVITY_EVENTS.forEach((e) => window.removeEventListener(e, onActivity))
     }
-  }, [enabled, router])
+  }, [enabled, router, queryClient])
 }
