@@ -37,6 +37,11 @@ type CachedBearerToken = {
 
 let cachedBearerToken: CachedBearerToken | null = null
 let pendingBearerToken: Promise<string | null> | null = null
+// Bumped by clearBearerToken() so a fetch that was already in flight at
+// sign-out time can't repopulate the cache once it resolves afterward --
+// otherwise a fast sign-in by a second user on the same tab could still
+// inherit the previous user's token.
+let tokenGeneration = 0
 
 function decodeJwtPayload(token: string) {
   const [, payload] = token.split(".")
@@ -69,9 +74,12 @@ function isTokenFresh(token: CachedBearerToken) {
 function clearBearerToken() {
   cachedBearerToken = null
   pendingBearerToken = null
+  tokenGeneration += 1
 }
 
 async function fetchBearerToken() {
+  const generation = tokenGeneration
+
   try {
     // Better Auth is mounted at /api/auth, so this should resolve to /api/auth/token.
     const response = await authClient.$fetch<{ token: string }>(tokenPath)
@@ -89,7 +97,9 @@ async function fetchBearerToken() {
 
     const expiresAt = getTokenExpiry(token)
 
-    if (expiresAt > Date.now()) {
+    // A clearBearerToken() call while this request was in flight must not
+    // let it repopulate the cache with a token issued before the clear.
+    if (expiresAt > Date.now() && generation === tokenGeneration) {
       cachedBearerToken = { token, expiresAt }
     }
 

@@ -72,6 +72,24 @@ test("clears the cached bearer token and query cache before redirecting to sign-
   expect(callOrder).toEqual(["signOut", "clearBearerToken", "queryClient.clear", "replace"])
 })
 
+test("clears local auth/query/workspace state even when the sign-out request rejects", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {})
+  useWorkspaceStore.setState({ activeWorkspaceId: "house-1", activeWorkspaceScope: "household" })
+  authMocks.signOut.mockRejectedValue(new Error("network error"))
+
+  const { clearSpy } = renderButton()
+
+  fireEvent.click(screen.getByRole("button", { name: "Sign out" }))
+
+  await waitFor(() => {
+    expect(routerMocks.replace).toHaveBeenCalledWith("/sign-in")
+  })
+
+  expect(authMocks.clearBearerToken).toHaveBeenCalledTimes(1)
+  expect(clearSpy).toHaveBeenCalledTimes(1)
+  expect(useWorkspaceStore.getState().activeWorkspaceId).toBeNull()
+})
+
 test("resets the active workspace on sign-out", async () => {
   useWorkspaceStore.setState({ activeWorkspaceId: "house-1", activeWorkspaceScope: "household" })
   authMocks.signOut.mockResolvedValue(undefined)

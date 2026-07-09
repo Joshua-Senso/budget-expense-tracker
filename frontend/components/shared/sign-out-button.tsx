@@ -17,11 +17,16 @@ function SignOutButton() {
     setLoading(true)
     try {
       await authClient.signOut()
+    } catch (error) {
+      console.error("auth: sign out request failed", error)
+    } finally {
+      // Clear local auth/query state even if the sign-out request itself
+      // failed, so a rejected request can't leave sensitive cached data
+      // reachable.
       clearBearerToken()
       queryClient.clear()
       useWorkspaceStore.getState().setActiveWorkspace({ id: null })
       router.replace("/sign-in")
-    } finally {
       setLoading(false)
     }
   }
