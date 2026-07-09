@@ -5,6 +5,7 @@ process.env.BETTER_AUTH_URL = "http://localhost:4000"
 process.env.BETTER_AUTH_SECRET = "test-auth-secret-placeholder-32chars"
 process.env.BETTER_AUTH_JWT_AUDIENCE = "expense-api"
 process.env.BETTER_AUTH_TRUSTED_ORIGINS = "http://localhost:3000"
+process.env.REDIS_URL = "redis://localhost:6379/0"
 
 describe("auth config", () => {
   test("uses the service base path and trusted frontend origin", async () => {
@@ -63,6 +64,46 @@ describe("auth config", () => {
       defaultValue: "dark",
     })
   })
+
+  test("rejects a theme value outside the allowed enum", async () => {
+    const { getAuthTables } = await import("better-auth/db")
+    const { auth } = await import("../src/auth")
+    const tables = getAuthTables(auth.options)
+    const validator = tables.user?.fields.theme?.validator?.input
+
+    expect(validator?.["~standard"].validate("dark").issues).toBeUndefined()
+    expect(validator?.["~standard"].validate("<script>alert(1)</script>").issues).toBeDefined()
+  })
+
+  test("mints a JWT payload limited to the claims the API trusts (sub/iat/exp), not the full user profile", async () => {
+    const { auth } = await import("../src/auth")
+    const jwtPlugin = auth.options.plugins?.find((plugin) => plugin.id === "jwt")
+    const payload = await jwtPlugin?.options?.jwt?.definePayload?.({
+      user: { id: "user-1", name: "Jane Doe", email: "jane@example.com" },
+      session: {},
+    })
+
+    expect(payload).toEqual({})
+  })
+
+  test("backs session storage with Redis while keeping Postgres as the durable copy", async () => {
+    const { auth } = await import("../src/auth")
+
+    expect(auth.options.secondaryStorage).toBeDefined()
+    expect(auth.options.session?.storeSessionInDatabase).toBe(true)
+    expect(auth.options.verification?.storeInDatabase).toBe(true)
+  })
+
+  test("rate limiter uses secondary storage (Redis) instead of per-process memory", async () => {
+    const { auth } = await import("../src/auth")
+
+    // No explicit `rateLimit.storage` is set — it derives from
+    // `secondaryStorage` being configured (better-auth/dist/context/
+    // create-context.mjs), which is what makes rate limits consistent across
+    // multiple instances of this service.
+    expect(auth.options.rateLimit?.storage).toBeUndefined()
+    expect(auth.options.secondaryStorage).toBeDefined()
+  })
 })
 
 describe("households (organization plugin)", () => {
@@ -81,6 +122,8 @@ describe("households (organization plugin)", () => {
 
     expect(fields.baseCurrency).toMatchObject({ type: "string", required: false, defaultValue: "PHP" })
     expect(fields.theme).toMatchObject({ type: "string", required: false, defaultValue: "dark" })
+    expect(fields.theme?.validator?.input?.["~standard"].validate("dark").issues).toBeUndefined()
+    expect(fields.theme?.validator?.input?.["~standard"].validate("not-a-theme").issues).toBeDefined()
   })
 
   test("no role is offered beyond owner/member, but admin is still mapped (not omitted)", async () => {
