@@ -52,6 +52,7 @@ name = "api"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "alembic" },
     { name = "arq" },
     { name = "boto3" },
     { name = "fastapi" },
@@ -67,7 +68,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "alembic" },
     { name = "httpx" },
     { name = "pytest" },
     { name = "ruff" },
@@ -76,6 +76,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "alembic", specifier = ">=1.18.4" },
     { name = "arq", specifier = ">=0.28.0" },
     { name = "boto3", specifier = ">=1.43.40" },
     { name = "fastapi", specifier = ">=0.137.2" },
@@ -91,7 +92,6 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "alembic", specifier = ">=1.18.4" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pytest", specifier = ">=9.1.1" },
     { name = "ruff", specifier = ">=0.15.18" },
