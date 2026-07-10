@@ -2,6 +2,7 @@
 
 import { CategoryColor } from "@/features/categories"
 import { SalaryInput } from "@/features/budget"
+import { useIsHouseholdWorkspace } from "@/hooks/use-is-household-workspace"
 import { formatCurrency } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { useMonthStore } from "@/stores/month-store"
@@ -89,6 +90,7 @@ function GroupCard({ title, group, baseCurrency }: GroupCardProps) {
 }
 
 function BudgetSummary({ summary }: { summary: DashboardSummaryData }) {
+  const isHouseholdWorkspace = useIsHouseholdWorkspace()
   const percentUsed =
     summary.percent_used === null ? null : Number(summary.percent_used)
   const tone = getUsageTone(percentUsed)
@@ -99,10 +101,18 @@ function BudgetSummary({ summary }: { summary: DashboardSummaryData }) {
         <p className="text-sm font-medium text-muted-foreground uppercase">
           Budget
         </p>
-        <SalaryInput />
+        {/* Salary is a personal month setting (no household_id support yet) --
+            shown here, saving it would silently write to the user's personal
+            setting with no effect on the household summary being viewed. */}
+        {!isHouseholdWorkspace && <SalaryInput />}
       </div>
 
-      {summary.monthly_net_salary === null ? (
+      {isHouseholdWorkspace ? (
+        <p className="text-sm text-muted-foreground">
+          Household budgets aren&apos;t supported yet — salary tracking is
+          personal-workspace only.
+        </p>
+      ) : summary.monthly_net_salary === null ? (
         <p className="text-sm text-muted-foreground">
           Set a monthly salary to track remaining balance and usage.
         </p>

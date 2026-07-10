@@ -4,6 +4,7 @@ import { useState } from "react"
 import { DownloadIcon, UploadIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { useIsHouseholdWorkspace } from "@/hooks/use-is-household-workspace"
 import { useYearStore } from "@/stores/year-store"
 
 import { useExportExpenses } from "../api/mutations"
@@ -29,6 +30,7 @@ function ImportExportControls() {
   const exportExpenses = useExportExpenses()
   const [importOpen, setImportOpen] = useState(false)
   const [exportError, setExportError] = useState<string | null>(null)
+  const isHouseholdWorkspace = useIsHouseholdWorkspace()
 
   async function handleExport() {
     setExportError(null)
@@ -38,6 +40,18 @@ function ImportExportControls() {
     } catch {
       setExportError(getExportErrorMessage())
     }
+  }
+
+  // Import/export only ever operates on the signed-in user's personal
+  // expenses (no household_id support yet) -- shown in a household workspace,
+  // Export would silently hand back personal data and Import could silently
+  // delete/overwrite it, both while looking like household actions.
+  if (isHouseholdWorkspace) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Import/export is available for your personal workspace only.
+      </p>
+    )
   }
 
   return (
