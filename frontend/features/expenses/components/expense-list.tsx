@@ -20,7 +20,10 @@ import { useMonthStore } from "@/stores/month-store"
 
 import { useDeleteExpense } from "../api/mutations"
 import { useExpenses } from "../api/queries"
-import { useExpenseFilterStore } from "../store"
+import {
+  useExpenseFilterStore,
+  useResetExpenseFilterOnWorkspaceChange,
+} from "../store"
 import { ExpenseActionDialog, getDeleteErrorMessage } from "./expense-action-dialog"
 import { ExpenseFilterBar } from "./expense-filter-bar"
 import { ExpenseFormDialog } from "./expense-form-dialog"
@@ -158,6 +161,7 @@ function ExpenseList() {
     expensesLoading || categoriesLoading || projectedLoading || summaryLoading
   const deleteExpense = useDeleteExpense()
   const filter = useExpenseFilterStore((state) => state.filter)
+  useResetExpenseFilterOnWorkspaceChange()
 
   const [editTarget, setEditTarget] = useState<Expense | undefined>(undefined)
   const [dialogOpen, setDialogOpen] = useState(false)
