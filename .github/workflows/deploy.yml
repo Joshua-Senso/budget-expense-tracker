@@ -1,8 +1,10 @@
 name: Deploy
 
-# Pulls the freshly built images on the application host and restarts the
-# affected services, then runs migrations as a deploy step (Better Auth CLI
-# for its tables, Alembic for app tables). See ARCHITECTURE.md §13.
+# Pulls the freshly built images on the application host, runs migrations
+# against those images (Better Auth CLI for its tables, Alembic for app
+# tables — both idempotent), then restarts the affected services -- so app
+# code never briefly runs against a schema it hasn't migrated to yet. See
+# ARCHITECTURE.md §13.
 #
 # Requires repo/environment secrets: SSH_HOST, SSH_USER, SSH_KEY.
 
@@ -26,10 +28,10 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
+            set -euo pipefail
             cd /opt/expense-tracker
             git pull --ff-only
             docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml pull
+            docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml run --rm auth bun run schema:migrate
+            docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml run --rm api uv run alembic upgrade head
             docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d
-            # Migrations run here once features add tables:
-            #   better-auth CLI (its tables) + `alembic upgrade head` (app tables).
-            # Not needed for v0.1 (api /health + auth hello only, no schema yet).

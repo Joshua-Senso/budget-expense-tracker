@@ -51,17 +51,17 @@ services:
       redis: {condition: service_started}
     restart: unless-stopped
 
-  # The arq worker reuses the api image with a different command. Disabled until
-  # background tasks exist (recurring gen / FX refresh / backups) — enabling it
-  # now would crash-loop because app.worker has nothing to run yet.
-  # worker:
-  #   build: ../services/api
-  #   command: ["uv", "run", "arq", "app.worker.settings.WorkerSettings"]
-  #   env_file: [.env]
-  #   depends_on:
-  #     postgres: {condition: service_healthy}
-  #     redis: {condition: service_started}
-  #   restart: unless-stopped
+  # The arq worker reuses the api image with a different command. Runs the
+  # recurring-expense generation job on a monthly cron (BUD-38); more
+  # background tasks (FX refresh / backups) will land here later.
+  worker:
+    build: ../services/api
+    command: ["uv", "run", "arq", "app.worker.settings.WorkerSettings"]
+    env_file: [.env]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_started}
+    restart: unless-stopped
 
 volumes:
   pgdata:

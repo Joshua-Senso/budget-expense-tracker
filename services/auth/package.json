@@ -1,12 +1,24 @@
 {
   "name": "auth",
   "scripts": {
-    "dev": "bun run --hot src/index.ts"
+    "dev": "bun run --hot src/server.ts",
+    "start": "bun run src/server.ts",
+    "schema:generate": "bunx @better-auth/cli@1.4.22 generate --config src/auth.ts",
+    "schema:migrate": "bunx @better-auth/cli@1.4.22 migrate --yes --config src/auth.ts",
+    "test": "bun test"
   },
   "dependencies": {
-    "hono": "^4.12.26"
+    "@better-auth/core": "1.6.23",
+    "@better-auth/kysely-adapter": "^1.6.23",
+    "better-auth": "^1.6.23",
+    "hono": "^4.12.26",
+    "kysely": "^0.29.2",
+    "pg": "^8.16.3",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@better-auth/cli": "1.4.22",
+    "@types/pg": "^8.15.6",
     "@types/bun": "latest"
   }
 }

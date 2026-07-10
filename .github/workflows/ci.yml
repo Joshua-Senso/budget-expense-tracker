@@ -59,9 +59,19 @@ jobs:
     env:
       DATABASE_URL: postgresql://expense:expense@localhost:5432/expense
       REDIS_URL: redis://localhost:6379/0
+      AUTH_JWKS_URL: http://localhost:4000/api/auth/jwks
+      AUTH_JWT_ISSUER: http://localhost:4000
+      AUTH_JWT_AUDIENCE: expense-api
+      FRONTEND_ORIGIN: http://localhost:3000
+      S3_ENDPOINT_URL: http://localhost:9000
+      S3_REGION: auto
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      RECEIPTS_BUCKET: receipts
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
       - run: uv sync
       - run: uv run ruff check .
+      - run: uv run alembic upgrade head
       - run: uv run pytest

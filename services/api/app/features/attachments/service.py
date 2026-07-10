@@ -1,0 +1,220 @@
+import uuid
+
+from botocore.exceptions import ClientError
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from app.core.households import locate_household_scoped_row
+from app.core.storage import (
+    StorageNotConfiguredError,
+    get_receipts_bucket,
+    get_s3_client,
+)
+from app.features.attachments.models import ExpenseAttachment
+from app.features.expenses.models import Expense
+
+# Receipts are photos of paper receipts, not arbitrary documents -- restrict to
+# common image types and map each to a fixed extension so the object key never
+# has to carry a user-supplied filename (PRD §9.6: bucket stays private, keys
+# are server-generated).
+ALLOWED_CONTENT_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/heic": ".heic",
+    "image/heif": ".heif",
+}
+MAX_SIZE_BYTES = 10 * 1024 * 1024
+UPLOAD_URL_EXPIRES_IN = 300
+DOWNLOAD_URL_EXPIRES_IN = 300
+
+
+class ExpenseNotFoundError(Exception):
+    pass
+
+
+class AttachmentNotFoundError(Exception):
+    pass
+
+
+class InvalidContentTypeError(Exception):
+    pass
+
+
+class AttachmentTooLargeError(Exception):
+    pass
+
+
+class ObjectNotUploadedError(Exception):
+    pass
+
+
+def _get_owned_expense(
+    db: Session, user_id: str, expense_id: str, *, require_owner: bool = False
+) -> Expense:
+    return locate_household_scoped_row(
+        db,
+        Expense,
+        expense_id,
+        user_id,
+        ExpenseNotFoundError,
+        require_owner=require_owner,
+    )
+
+
+def _get_owned_attachment(
+    db: Session,
+    user_id: str,
+    expense_id: str,
+    attachment_id: str,
+    *,
+    require_owner: bool = False,
+) -> tuple[Expense, ExpenseAttachment]:
+    # Access to the expense (personal or household) already gates access to
+    # every attachment on it -- not just the ones this caller uploaded, so
+    # household members can see each other's receipts on a shared expense.
+    expense = _get_owned_expense(db, user_id, expense_id, require_owner=require_owner)
+    attachment = db.execute(
+        select(ExpenseAttachment).where(
+            ExpenseAttachment.id == attachment_id,
+            ExpenseAttachment.expense_id == expense_id,
+        )
+    ).scalar_one_or_none()
+    if attachment is None:
+        raise AttachmentNotFoundError(attachment_id)
+    return expense, attachment
+
+
+def _validate_content_type(content_type: str) -> None:
+    if content_type not in ALLOWED_CONTENT_TYPES:
+        raise InvalidContentTypeError(content_type)
+
+
+def _validate_size(size_bytes: int) -> None:
+    if size_bytes > MAX_SIZE_BYTES:
+        raise AttachmentTooLargeError(size_bytes)
+
+
+def create_upload_url(
+    db: Session,
+    user_id: str,
+    expense_id: str,
+    content_type: str,
+    size_bytes: int,
+) -> tuple[str, str]:
+    """Mint a short-lived presigned PUT URL; the client uploads bytes directly
+    to object storage, so receipt bytes never pass through this API."""
+    _get_owned_expense(db, user_id, expense_id)
+    _validate_content_type(content_type)
+    _validate_size(size_bytes)
+
+    extension = ALLOWED_CONTENT_TYPES[content_type]
+    object_key = f"{user_id}/{expense_id}/{uuid.uuid4()}{extension}"
+    upload_url = get_s3_client().generate_presigned_url(
+        "put_object",
+        Params={
+            "Bucket": get_receipts_bucket(),
+            "Key": object_key,
+            "ContentType": content_type,
+        },
+        ExpiresIn=UPLOAD_URL_EXPIRES_IN,
+    )
+    return upload_url, object_key
+
+
+def confirm_attachment(
+    db: Session, user_id: str, expense_id: str, object_key: str
+) -> ExpenseAttachment:
+    expense = _get_owned_expense(db, user_id, expense_id)
+
+    expected_prefix = f"{user_id}/{expense_id}/"
+    if not object_key.startswith(expected_prefix):
+        raise ObjectNotUploadedError(object_key)
+
+    try:
+        # head_object is the source of truth for content_type/size_bytes -- a
+        # client-supplied value here could misreport them to dodge the size cap
+        # or the content-type allow-list.
+        head = get_s3_client().head_object(Bucket=get_receipts_bucket(), Key=object_key)
+    except ClientError as exc:
+        raise ObjectNotUploadedError(object_key) from exc
+
+    content_type = head["ContentType"]
+    size_bytes = head["ContentLength"]
+    _validate_content_type(content_type)
+    _validate_size(size_bytes)
+
+    attachment = ExpenseAttachment(
+        expense_id=expense.id,
+        user_id=user_id,
+        household_id=expense.household_id,
+        object_key=object_key,
+        content_type=content_type,
+        size_bytes=size_bytes,
+    )
+    db.add(attachment)
+    try:
+        db.commit()
+    except IntegrityError:
+        # A retried confirm (e.g. the first request committed but the client
+        # timed out waiting for the response) re-confirms the same object_key.
+        # Treat it as idempotent rather than surfacing a 500.
+        db.rollback()
+        existing = db.execute(
+            select(ExpenseAttachment).where(ExpenseAttachment.object_key == object_key)
+        ).scalar_one_or_none()
+        if existing is None:
+            raise
+        return existing
+    return attachment
+
+
+def list_attachments(
+    db: Session, user_id: str, expense_id: str
+) -> list[ExpenseAttachment]:
+    _get_owned_expense(db, user_id, expense_id)
+    return list(
+        db.execute(
+            select(ExpenseAttachment)
+            .where(ExpenseAttachment.expense_id == expense_id)
+            .order_by(ExpenseAttachment.uploaded_at)
+        )
+        .scalars()
+        .all()
+    )
+
+
+def create_download_url(
+    db: Session, user_id: str, expense_id: str, attachment_id: str
+) -> str:
+    _, attachment = _get_owned_attachment(db, user_id, expense_id, attachment_id)
+    return get_s3_client().generate_presigned_url(
+        "get_object",
+        Params={"Bucket": get_receipts_bucket(), "Key": attachment.object_key},
+        ExpiresIn=DOWNLOAD_URL_EXPIRES_IN,
+    )
+
+
+def delete_attachment(
+    db: Session, user_id: str, expense_id: str, attachment_id: str
+) -> None:
+    # Deleting a receipt from a shared expense is edit-like, so it's
+    # restricted to the household owner (PRD §10); members may add/view.
+    _, attachment = _get_owned_attachment(
+        db, user_id, expense_id, attachment_id, require_owner=True
+    )
+    object_key = attachment.object_key
+    db.delete(attachment)
+    db.commit()
+
+    # DB row is the source of truth for what's listable/downloadable, so it's
+    # deleted first: if this S3 cleanup step fails for any reason -- a bucket
+    # error, or storage not being configured at all -- the object is merely
+    # orphaned (a storage-cost concern), not a row pointing at nothing. Since
+    # the row is already gone, that failure must not surface as an error to
+    # the caller, who already got the delete they asked for.
+    try:
+        get_s3_client().delete_object(Bucket=get_receipts_bucket(), Key=object_key)
+    except (ClientError, StorageNotConfiguredError):
+        pass

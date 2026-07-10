@@ -1,8 +1,73 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-app = FastAPI(title="Expense Tracker API")
+from app.core.config import get_settings
+from app.core.households import HouseholdAccessError, HouseholdRoleError
+from app.core.security import get_current_user_id
+from app.core.storage import StorageNotConfiguredError
+from app.features.attachments.router import router as attachments_router
+from app.features.budget.router import router as budget_router
+from app.features.categories.router import router as categories_router
+from app.features.dashboard.router import router as dashboard_router
+from app.features.exchange_rates.router import router as exchange_rates_router
+from app.features.expenses.router import router as expenses_router
+from app.features.import_export.router import router as import_export_router
+from app.features.recurring.router import router as recurring_router
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+def create_app() -> FastAPI:
+    app = FastAPI(title="Expense Tracker API")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[get_settings().frontend_origin],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(categories_router)
+    app.include_router(expenses_router)
+    app.include_router(attachments_router)
+    app.include_router(budget_router)
+    app.include_router(dashboard_router)
+    app.include_router(recurring_router)
+    app.include_router(import_export_router)
+    app.include_router(exchange_rates_router)
+
+    @app.exception_handler(StorageNotConfiguredError)
+    def handle_storage_not_configured(
+        request: Request, exc: StorageNotConfiguredError
+    ) -> JSONResponse:
+        del request
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+    @app.exception_handler(HouseholdAccessError)
+    def handle_household_access_error(
+        request: Request, exc: HouseholdAccessError
+    ) -> JSONResponse:
+        del request, exc
+        return JSONResponse(status_code=404, content={"detail": "Household not found."})
+
+    @app.exception_handler(HouseholdRoleError)
+    def handle_household_role_error(
+        request: Request, exc: HouseholdRoleError
+    ) -> JSONResponse:
+        del request, exc
+        return JSONResponse(
+            status_code=403, content={"detail": "Only the household owner can do this."}
+        )
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @app.get("/me")
+    def read_current_user(
+        user_id: str = Depends(get_current_user_id),
+    ) -> dict[str, str]:
+        return {"user_id": user_id}
+
+    return app
+
+
+app = create_app()

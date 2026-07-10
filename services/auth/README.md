@@ -1,11 +1,19 @@
-To install dependencies:
+# Auth Service
+
+Better Auth service for identity, sessions, JWT/JWKS, and organizations
+(households). It runs on Bun and mounts Better Auth at `/api/auth/*`.
+
 ```sh
 bun install
-```
-
-To run:
-```sh
+cp .env.example .env
 bun run dev
 ```
 
-open http://localhost:3000
+Local service URL: http://localhost:4000
+
+Schema is owned by the Better Auth CLI:
+
+```sh
+bun run schema:generate
+bun run schema:migrate
+```
