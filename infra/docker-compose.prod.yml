@@ -28,3 +28,8 @@ services:
     image: ${AUTH_IMAGE}
   api:
     image: ${API_IMAGE}
+  # Same image as `api` -- the worker is the API codebase run with a different
+  # command (see docker-compose.yml), so it must run the identical CI-built
+  # artifact rather than building fresh from whatever's checked out on the host.
+  worker:
+    image: ${API_IMAGE}
