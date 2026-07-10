@@ -126,6 +126,29 @@ def test_import_expenses_returns_summary(monkeypatch) -> None:
     assert response.json() == {"inserted": 1, "updated": 2, "deleted": 3}
 
 
+def test_import_expenses_rejects_oversized_upload(monkeypatch) -> None:
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        "app.features.import_export.router.service.import_workbook",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    client = make_client_with_jwk(monkeypatch, private_key.public_key())
+    token = make_token(private_key)
+
+    oversized = BytesIO(b"a" * (10 * 1024 * 1024 + 1))
+    response = client.post(
+        "/import-export/import/2026",
+        headers={"Authorization": f"Bearer {token}"},
+        files={"file": ("expenses.xlsx", oversized, "application/octet-stream")},
+    )
+
+    assert response.status_code == 413
+    assert "10 MB" in response.json()["detail"]
+    # The size check must happen before parsing -- never call the service.
+    assert calls == []
+
+
 def test_import_expenses_requires_auth(monkeypatch) -> None:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     client = make_client_with_jwk(monkeypatch, private_key.public_key())

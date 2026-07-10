@@ -11,6 +11,11 @@ router = APIRouter(prefix="/import-export", tags=["import-export"])
 
 _YEAR_PATTERN = r"^[1-9]\d{3}$"
 
+# Workbooks are parsed fully into memory (openpyxl/xlrd don't stream), so an
+# unbounded upload is a memory-exhaustion risk -- reject oversized files
+# before reading them, same reasoning as attachments' MAX_SIZE_BYTES cap.
+_MAX_IMPORT_SIZE_BYTES = 10 * 1024 * 1024
+
 
 @router.get("/export/{year}")
 def export_expenses(
@@ -36,6 +41,14 @@ def import_expenses(
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> ImportSummary:
+    if file.size is not None and file.size > _MAX_IMPORT_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "File exceeds the "
+                f"{_MAX_IMPORT_SIZE_BYTES // (1024 * 1024)} MB import size limit."
+            ),
+        )
     try:
         return service.import_workbook(
             db,
