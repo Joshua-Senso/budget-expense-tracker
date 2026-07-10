@@ -18,9 +18,20 @@ function useImportExpenses() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: ({ year, file }: { year: number; file: File }) => {
+    mutationFn: ({
+      year,
+      file,
+      confirmDeletions,
+    }: {
+      year: number
+      file: File
+      confirmDeletions?: boolean
+    }) => {
       const formData = new FormData()
       formData.append("file", file)
+      if (confirmDeletions) {
+        formData.append("confirm_deletions", "true")
+      }
 
       return apiFetch<ImportSummary>(`/import-export/import/${year}`, {
         method: "POST",

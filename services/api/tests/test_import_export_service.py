@@ -7,8 +7,10 @@ import pytest
 from openpyxl import Workbook, load_workbook
 
 from app.features.expenses.models import Expense
+from app.features.import_export.schemas import PendingDeletion
 from app.features.import_export.service import (
     EXPORT_COLUMNS,
+    ImportRequiresConfirmationError,
     ImportValidationError,
     WorkbookParseError,
     _InsertPlan,
@@ -847,7 +849,7 @@ def test_build_import_plan_allows_update_when_system_columns_untouched() -> None
 def test_apply_import_plan_inserts_updates_and_deletes() -> None:
     db = _mock_db()
     expense = _make_expense(id="exp-1", category_id="cat-1", description="Old")
-    _queue_db(db, [])  # the bulk-delete statement's execute() call
+    _queue_db(db, [], [])  # attachment object_key lookup, then the bulk-delete
 
     inserts = [
         _InsertPlan("cat-1", "New expense", Decimal("10.00"), "PHP", date(2026, 1, 1))
@@ -1052,6 +1054,54 @@ def test_apply_import_plan_skips_delete_statement_when_nothing_to_delete() -> No
     assert summary.deleted == 0
 
 
+def test_apply_import_plan_cleans_up_attachment_s3_objects_for_deleted_expenses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _mock_db()
+    _queue_db(db, ["user-1/exp-old/receipt.jpg"], [])
+
+    fake_s3 = MagicMock()
+    monkeypatch.setattr(
+        "app.features.import_export.service.get_s3_client", lambda: fake_s3
+    )
+    monkeypatch.setattr(
+        "app.features.import_export.service.get_receipts_bucket", lambda: "receipts"
+    )
+
+    summary = apply_import_plan(db, "user-1", [], [], {"exp-old"})
+
+    fake_s3.delete_object.assert_called_once_with(
+        Bucket="receipts", Key="user-1/exp-old/receipt.jpg"
+    )
+    assert summary.deleted == 1
+
+
+def test_apply_import_plan_tolerates_s3_cleanup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botocore.exceptions import ClientError
+
+    db = _mock_db()
+    _queue_db(db, ["user-1/exp-old/receipt.jpg"], [])
+
+    fake_s3 = MagicMock()
+    fake_s3.delete_object.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey", "Message": "not found"}}, "DeleteObject"
+    )
+    monkeypatch.setattr(
+        "app.features.import_export.service.get_s3_client", lambda: fake_s3
+    )
+    monkeypatch.setattr(
+        "app.features.import_export.service.get_receipts_bucket", lambda: "receipts"
+    )
+
+    # An orphaned object is a storage-cost concern, not a caller-facing error --
+    # the import already committed by the time cleanup runs.
+    summary = apply_import_plan(db, "user-1", [], [], {"exp-old"})
+
+    assert summary.deleted == 1
+
+
 def test_apply_import_plan_rolls_back_and_raises_on_db_conflict() -> None:
     from sqlalchemy.exc import IntegrityError
 
@@ -1102,3 +1152,62 @@ def test_import_workbook_applies_valid_plan() -> None:
 
     assert summary.inserted == 1
     db.commit.assert_called_once()
+
+
+def test_import_workbook_requires_confirmation_when_deletions_pending() -> None:
+    db = _mock_db()
+    existing = _make_expense(
+        id="exp-old", description="Old rent", spent_on=date(2026, 1, 1)
+    )
+    _queue_db(
+        db,
+        [("Food", "cat-1")],  # categories
+        [existing],  # _owned_expenses_for_year
+        [("exp-old", "Old rent", date(2026, 1, 1))],  # _pending_deletions
+    )
+    file_bytes = _build_xlsx(EXPORT_COLUMNS, [])  # empty sheet references nothing
+
+    with pytest.raises(ImportRequiresConfirmationError) as exc_info:
+        import_workbook(db, "user-1", file_bytes, "expenses.xlsx", 2026)
+
+    assert exc_info.value.deletions == [
+        PendingDeletion(
+            row_id="exp-old", description="Old rent", spent_on=date(2026, 1, 1)
+        )
+    ]
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_import_workbook_applies_deletions_when_confirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = _mock_db()
+    existing = _make_expense(
+        id="exp-old", description="Old rent", spent_on=date(2026, 1, 1)
+    )
+    _queue_db(
+        db,
+        [("Food", "cat-1")],  # categories
+        [existing],  # _owned_expenses_for_year
+        ["user-1/exp-old/receipt.jpg"],  # attachment object_key lookup
+        [],  # bulk-delete execute() call
+    )
+    fake_s3 = MagicMock()
+    monkeypatch.setattr(
+        "app.features.import_export.service.get_s3_client", lambda: fake_s3
+    )
+    monkeypatch.setattr(
+        "app.features.import_export.service.get_receipts_bucket", lambda: "receipts"
+    )
+    file_bytes = _build_xlsx(EXPORT_COLUMNS, [])
+
+    summary = import_workbook(
+        db, "user-1", file_bytes, "expenses.xlsx", 2026, confirm_deletions=True
+    )
+
+    assert summary.deleted == 1
+    db.commit.assert_called_once()
+    fake_s3.delete_object.assert_called_once_with(
+        Bucket="receipts", Key="user-1/exp-old/receipt.jpg"
+    )

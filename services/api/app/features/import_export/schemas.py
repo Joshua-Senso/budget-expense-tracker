@@ -1,3 +1,5 @@
+from datetime import date
+
 from pydantic import BaseModel
 
 
@@ -10,3 +12,9 @@ class ImportSummary(BaseModel):
 class ImportRowError(BaseModel):
     row: int
     messages: list[str]
+
+
+class PendingDeletion(BaseModel):
+    row_id: str
+    description: str
+    spent_on: date
