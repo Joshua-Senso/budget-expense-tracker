@@ -1102,6 +1102,35 @@ def test_apply_import_plan_tolerates_s3_cleanup_failure(
     assert summary.deleted == 1
 
 
+def test_apply_import_plan_tolerates_storage_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """get_s3_client()/get_receipts_bucket() themselves raise
+    StorageNotConfiguredError when storage env vars are missing -- that lookup
+    must stay inside the same best-effort try as delete_object, or a missing
+    storage config would turn an already-committed import into a 500."""
+    from app.core.storage import StorageNotConfiguredError
+
+    db = _mock_db()
+    _queue_db(db, ["user-1/exp-old/receipt.jpg"], [])
+
+    def _raise_not_configured():
+        raise StorageNotConfiguredError("Receipt storage is not configured")
+
+    monkeypatch.setattr(
+        "app.features.import_export.service.get_s3_client", _raise_not_configured
+    )
+    monkeypatch.setattr(
+        "app.features.import_export.service.get_receipts_bucket",
+        _raise_not_configured,
+    )
+
+    summary = apply_import_plan(db, "user-1", [], [], {"exp-old"})
+
+    assert summary.deleted == 1
+    db.commit.assert_called_once()
+
+
 def test_apply_import_plan_rolls_back_and_raises_on_db_conflict() -> None:
     from sqlalchemy.exc import IntegrityError
 

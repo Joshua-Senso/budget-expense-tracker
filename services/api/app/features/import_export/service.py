@@ -807,15 +807,15 @@ def apply_import_plan(
     # this best-effort cleanup mirrors attachments/service.py::delete_attachment:
     # a storage error here only orphans an object (a cost concern), not a
     # dangling row -- it must not surface as an error on an import that already
-    # succeeded.
-    if object_keys:
-        s3 = get_s3_client()
-        bucket = get_receipts_bucket()
-        for object_key in object_keys:
-            try:
-                s3.delete_object(Bucket=bucket, Key=object_key)
-            except (ClientError, StorageNotConfiguredError):
-                pass
+    # succeeded. get_s3_client()/get_receipts_bucket() must stay inside the
+    # try too -- both raise StorageNotConfiguredError, and calling them
+    # outside it would let a missing/misconfigured storage setup turn an
+    # already-committed import into a 500.
+    for object_key in object_keys:
+        try:
+            get_s3_client().delete_object(Bucket=get_receipts_bucket(), Key=object_key)
+        except (ClientError, StorageNotConfiguredError):
+            pass
 
     return ImportSummary(
         inserted=len(inserts), updated=len(updates), deleted=len(delete_ids)
