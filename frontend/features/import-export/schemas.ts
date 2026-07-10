@@ -20,3 +20,14 @@ export type ImportRowError = {
   row: number
   messages: string[]
 }
+
+export type PendingDeletion = {
+  row_id: string
+  description: string
+  spent_on: string
+}
+
+export type ImportConfirmationRequired = {
+  requires_confirmation: true
+  deleted: PendingDeletion[]
+}

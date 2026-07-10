@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, HTTPException, Path, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
@@ -32,14 +32,28 @@ def export_expenses(
 def import_expenses(
     year: str = Path(pattern=_YEAR_PATTERN),
     file: UploadFile = File(...),
+    confirm_deletions: bool = Form(False),
     user_id: str = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> ImportSummary:
     try:
         return service.import_workbook(
-            db, user_id, file.file.read(), file.filename or "", int(year)
+            db,
+            user_id,
+            file.file.read(),
+            file.filename or "",
+            int(year),
+            confirm_deletions=confirm_deletions,
         )
     except service.WorkbookParseError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except service.ImportValidationError as exc:
         raise HTTPException(status_code=422, detail=exc.errors)
+    except service.ImportRequiresConfirmationError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "requires_confirmation": True,
+                "deleted": [d.model_dump(mode="json") for d in exc.deletions],
+            },
+        )

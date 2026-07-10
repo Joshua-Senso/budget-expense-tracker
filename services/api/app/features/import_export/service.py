@@ -5,11 +5,18 @@ from io import BytesIO
 from typing import Any
 
 import xlrd
+from botocore.exceptions import ClientError
 from openpyxl import Workbook, load_workbook
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.storage import (
+    StorageNotConfiguredError,
+    get_receipts_bucket,
+    get_s3_client,
+)
+from app.features.attachments.models import ExpenseAttachment
 from app.features.categories.models import UserCategory
 from app.features.currency.service import (
     convert_to_base_or_unconverted,
@@ -23,7 +30,7 @@ from app.features.expenses.schemas import (
     _validate_amount,
     _validate_currency,
 )
-from app.features.import_export.schemas import ImportSummary
+from app.features.import_export.schemas import ImportSummary, PendingDeletion
 from app.features.recurring.service import project_month
 
 EXPORT_COLUMNS = [
@@ -228,6 +235,15 @@ class ImportValidationError(Exception):
         super().__init__("Import validation failed")
 
 
+class ImportRequiresConfirmationError(Exception):
+    """Raised instead of committing when the sheet implies deletions the
+    caller hasn't confirmed yet -- see `import_workbook`."""
+
+    def __init__(self, deletions: list[PendingDeletion]) -> None:
+        self.deletions = deletions
+        super().__init__("Import requires confirmation of pending deletions")
+
+
 @dataclass
 class _InsertPlan:
     category_id: str
@@ -393,6 +409,20 @@ def _owned_expenses_for_year(db: Session, user_id: str, year: int) -> list[Expen
         .scalars()
         .all()
     )
+
+
+def _pending_deletions(db: Session, delete_ids: set[str]) -> list[PendingDeletion]:
+    if not delete_ids:
+        return []
+    rows = db.execute(
+        select(Expense.id, Expense.description, Expense.spent_on).where(
+            Expense.id.in_(delete_ids)
+        )
+    ).all()
+    return [
+        PendingDeletion(row_id=row_id, description=description, spent_on=spent_on)
+        for row_id, description, spent_on in rows
+    ]
 
 
 _AMOUNT_QUANT = Decimal("0.01")
@@ -693,7 +723,20 @@ def apply_import_plan(
     updates: list[_UpdatePlan],
     delete_ids: set[str],
 ) -> ImportSummary:
+    object_keys: list[str] = []
     if delete_ids:
+        # Captured before the delete -- the bulk DELETE below is raw SQL the
+        # ORM can't hook, and expense_attachments cascades at the DB level,
+        # so this is the only chance to know which S3 objects need cleanup.
+        object_keys = list(
+            db.execute(
+                select(ExpenseAttachment.object_key).where(
+                    ExpenseAttachment.expense_id.in_(delete_ids)
+                )
+            )
+            .scalars()
+            .all()
+        )
         db.execute(
             delete(Expense).where(
                 Expense.user_id == user_id,
@@ -759,16 +802,38 @@ def apply_import_plan(
                 }
             ]
         ) from exc
+
+    # DB rows are already committed (source of truth for what's deleted), so
+    # this best-effort cleanup mirrors attachments/service.py::delete_attachment:
+    # a storage error here only orphans an object (a cost concern), not a
+    # dangling row -- it must not surface as an error on an import that already
+    # succeeded. get_s3_client()/get_receipts_bucket() must stay inside the
+    # try too -- both raise StorageNotConfiguredError, and calling them
+    # outside it would let a missing/misconfigured storage setup turn an
+    # already-committed import into a 500.
+    for object_key in object_keys:
+        try:
+            get_s3_client().delete_object(Bucket=get_receipts_bucket(), Key=object_key)
+        except (ClientError, StorageNotConfiguredError):
+            pass
+
     return ImportSummary(
         inserted=len(inserts), updated=len(updates), deleted=len(delete_ids)
     )
 
 
 def import_workbook(
-    db: Session, user_id: str, file_bytes: bytes, filename: str, year: int
+    db: Session,
+    user_id: str,
+    file_bytes: bytes,
+    filename: str,
+    year: int,
+    confirm_deletions: bool = False,
 ) -> ImportSummary:
     rows = read_import_rows(file_bytes, filename)
     inserts, updates, delete_ids, errors = build_import_plan(db, user_id, rows, year)
     if errors:
         raise ImportValidationError(errors)
+    if delete_ids and not confirm_deletions:
+        raise ImportRequiresConfirmationError(_pending_deletions(db, delete_ids))
     return apply_import_plan(db, user_id, inserts, updates, delete_ids)

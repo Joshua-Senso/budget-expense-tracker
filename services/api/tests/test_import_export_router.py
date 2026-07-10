@@ -92,12 +92,18 @@ def test_export_expenses_rejects_non_numeric_year(monkeypatch) -> None:
 
 
 def _upload(
-    client: Any, token: str, year: str = "2026", filename: str = "expenses.xlsx"
+    client: Any,
+    token: str,
+    year: str = "2026",
+    filename: str = "expenses.xlsx",
+    confirm_deletions: bool | None = None,
 ):
+    data = {} if confirm_deletions is None else {"confirm_deletions": confirm_deletions}
     return client.post(
         f"/import-export/import/{year}",
         headers={"Authorization": f"Bearer {token}"},
         files={"file": (filename, BytesIO(b"fake-bytes"), "application/octet-stream")},
+        data=data,
     )
 
 
@@ -106,8 +112,8 @@ def test_import_expenses_returns_summary(monkeypatch) -> None:
 
     monkeypatch.setattr(
         "app.features.import_export.router.service.import_workbook",
-        lambda db, user_id, contents, filename, year: ImportSummary(
-            inserted=1, updated=2, deleted=3
+        lambda db, user_id, contents, filename, year, confirm_deletions=False: (
+            ImportSummary(inserted=1, updated=2, deleted=3)
         ),
     )
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -135,7 +141,9 @@ def test_import_expenses_requires_auth(monkeypatch) -> None:
 def test_import_expenses_returns_400_on_parse_error(monkeypatch) -> None:
     from app.features.import_export.service import WorkbookParseError
 
-    def raise_parse_error(db, user_id, contents, filename, year):
+    def raise_parse_error(
+        db, user_id, contents, filename, year, confirm_deletions=False
+    ):
         raise WorkbookParseError("Missing required columns: Amount")
 
     monkeypatch.setattr(
@@ -156,7 +164,9 @@ def test_import_expenses_returns_422_with_row_errors_on_validation_failure(
 ) -> None:
     from app.features.import_export.service import ImportValidationError
 
-    def raise_validation_error(db, user_id, contents, filename, year):
+    def raise_validation_error(
+        db, user_id, contents, filename, year, confirm_deletions=False
+    ):
         raise ImportValidationError(
             [{"row": 3, "messages": ["Description is required."]}]
         )
@@ -175,3 +185,65 @@ def test_import_expenses_returns_422_with_row_errors_on_validation_failure(
     assert response.json()["detail"] == [
         {"row": 3, "messages": ["Description is required."]}
     ]
+
+
+def test_import_expenses_returns_409_when_deletions_need_confirmation(
+    monkeypatch,
+) -> None:
+    from app.features.import_export.schemas import PendingDeletion
+    from app.features.import_export.service import ImportRequiresConfirmationError
+
+    def raise_requires_confirmation(
+        db, user_id, contents, filename, year, confirm_deletions=False
+    ):
+        assert confirm_deletions is False
+        raise ImportRequiresConfirmationError(
+            [
+                PendingDeletion(
+                    row_id="exp-1", description="Old rent", spent_on="2026-01-01"
+                )
+            ]
+        )
+
+    monkeypatch.setattr(
+        "app.features.import_export.router.service.import_workbook",
+        raise_requires_confirmation,
+    )
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    client = make_client_with_jwk(monkeypatch, private_key.public_key())
+    token = make_token(private_key)
+
+    response = _upload(client, token)
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "requires_confirmation": True,
+        "deleted": [
+            {"row_id": "exp-1", "description": "Old rent", "spent_on": "2026-01-01"}
+        ],
+    }
+
+
+def test_import_expenses_confirmed_deletions_pass_through(monkeypatch) -> None:
+    from app.features.import_export.schemas import ImportSummary
+
+    seen: dict[str, Any] = {}
+
+    def fake_import_workbook(
+        db, user_id, contents, filename, year, confirm_deletions=False
+    ):
+        seen["confirm_deletions"] = confirm_deletions
+        return ImportSummary(inserted=0, updated=0, deleted=1)
+
+    monkeypatch.setattr(
+        "app.features.import_export.router.service.import_workbook",
+        fake_import_workbook,
+    )
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    client = make_client_with_jwk(monkeypatch, private_key.public_key())
+    token = make_token(private_key)
+
+    response = _upload(client, token, confirm_deletions=True)
+
+    assert response.status_code == 200
+    assert seen["confirm_deletions"] is True
